@@ -106,6 +106,8 @@ class EqualizerView(Gtk.Overlay):
 
         self.player.connect("track-changed", lambda _p, track: self._on_track(track))
         self.player.connect("eq-changed", lambda *_: self._sync_from_player())
+        # Quitting right after a change: save it before the app closes the database.
+        win.app.connect("shutdown", lambda *_: self._flush_save())
         self._on_track(self.player.current)
 
     # ---- following the player ----

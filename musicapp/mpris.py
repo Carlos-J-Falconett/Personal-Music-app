@@ -110,7 +110,8 @@ class MprisService:
         elif method == "Seek":
             (offset,) = params.unpack()
             target = p.get_position() + offset / 1e6
-            if target >= p.get_duration():
+            duration = p.get_duration()
+            if duration > 0 and target >= duration:
                 p.next()
             else:
                 p.seek(max(0.0, target))

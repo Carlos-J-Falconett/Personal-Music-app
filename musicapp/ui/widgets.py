@@ -344,14 +344,21 @@ def fill_playlist_checks(page, win, items):
         inside = library.playlists_with(items[0]) if len(items) == 1 else set()
         rows = page.add_scrolling(300)
         for p in playlists:
-            def toggle(on, pid=p["id"], count=[p["count"]]):
+            def toggle(on, pid=p["id"], count=[p["count"]], added_here=[]):
                 if on:
-                    count[0] += library.add_to_playlist(pid, items)
+                    # Remember which songs this check added, so unchecking only takes those out.
+                    before = set(library.db.playlist_track_ids(pid))
+                    added_here[:] = [i for i in items if i.id not in before]
+                    added = library.add_to_playlist(pid, added_here)
+                    count[0] += added
                     if len(items) > 1:
-                        win.toast(f"Added {len(items)} songs to “{library.playlist_name(pid)}”")
+                        win.toast(f"Added {added} song{'s' if added != 1 else ''} "
+                                  f"to “{library.playlist_name(pid)}”")
                 else:
-                    library.remove_from_playlist(pid, items)
-                    count[0] = max(0, count[0] - len(items))
+                    removed = added_here if len(items) > 1 else items
+                    library.remove_from_playlist(pid, removed)
+                    count[0] = max(0, count[0] - len(removed))
+                    added_here.clear()
                 return count[0]
             rows.add_check(p["name"], p["id"] in inside, toggle, detail=str(p["count"]),
                            icon=PLAYLIST_ICON)

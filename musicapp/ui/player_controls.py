@@ -85,6 +85,10 @@ class PlayerControls(Gtk.Box):
     # ---- player -> UI ----
 
     def _on_track_changed(self, _player, track):
+        if self._seek_timeout:  # a drag on the previous song mustn't seek this one
+            GLib.source_remove(self._seek_timeout)
+            self._seek_timeout = 0
+            self._seeking = False
         self.scale.set_sensitive(track is not None)
         if track is None:
             self._set_time(0, 0)

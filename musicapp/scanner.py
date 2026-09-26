@@ -95,6 +95,11 @@ class Scanner(GObject.Object):
     def _scan_dir(self, root: str) -> tuple[int, int]:
         found = walk_audio_files(root) if os.path.isdir(root) else {}
         known = self.db.file_index(root)
+        # A missing or empty library folder (renamed, unmounted) must not wipe the library:
+        # deleting tracks also deletes their favorites, playlist entries and EQ.
+        if root.rstrip("/") == self.root.rstrip("/") and known and not found:
+            print(f"[scanner] {root} is missing or has no music; keeping the library as it is")
+            return 0, 0
 
         to_read = [p for p, sig in found.items() if known.get(p) != sig]
         removed = [p for p in known if p not in found]

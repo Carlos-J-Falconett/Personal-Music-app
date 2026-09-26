@@ -254,17 +254,18 @@ class Player(GObject.Object):
     def remove_tracks(self, predicate):
         """Drop tracks (e.g. deleted from disk) from the queue."""
         cur = self.current
-        keep = [t for t in self._tracks if not predicate(t)]
-        if len(keep) == len(self._tracks):
+        kept = [i for i, t in enumerate(self._tracks) if not predicate(t)]
+        if len(kept) == len(self._tracks):
             return
         if cur is not None and predicate(cur):
             self.clear_queue()
             return
-        self._tracks = keep
-        self._order = list(range(len(keep)))
-        self._pos = keep.index(cur) if cur in keep else -1
-        if self._shuffle:
-            self._shuffle_order()
+        # Keep the play order (shuffled or not) of what's left.
+        new_index = {old: new for new, old in enumerate(kept)}
+        cur_orig = self._order[self._pos] if 0 <= self._pos < len(self._order) else None
+        self._tracks = [self._tracks[i] for i in kept]
+        self._order = [new_index[i] for i in self._order if i in new_index]
+        self._pos = self._order.index(new_index[cur_orig]) if cur_orig is not None else -1
         self.emit("queue-changed")
 
     def _shuffle_order(self):

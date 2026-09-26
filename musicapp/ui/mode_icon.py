@@ -25,8 +25,21 @@ def follow_mode(image: Gtk.Image, art):
         if name is None:  # None: the mode switched
             flip_to(image, mode_texture(art.turned))
 
-    art.artist_listeners.append(on_change)
-    image.connect("destroy", lambda *_: on_change in art.artist_listeners and art.artist_listeners.remove(on_change))
+    # Listen only while on screen: menus build a new icon each time they open, and a listener
+    # kept for good would keep every old icon alive.
+    def on_map(*_):
+        image.set_from_paintable(mode_texture(art.turned))
+        if on_change not in art.artist_listeners:
+            art.artist_listeners.append(on_change)
+
+    def on_unmap(*_):
+        if on_change in art.artist_listeners:
+            art.artist_listeners.remove(on_change)
+
+    image.connect("map", on_map)
+    image.connect("unmap", on_unmap)
+    if image.get_mapped():
+        on_map()
 
 
 def flip_to(image: Gtk.Image, paintable):

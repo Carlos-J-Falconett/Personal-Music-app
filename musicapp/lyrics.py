@@ -166,9 +166,12 @@ class LyricsService:
             data = json.loads(path.read_text())
         except (OSError, ValueError):
             return None
-        if data.get("kind") == "none" and time.time() - data.get("saved", 0) > NONE_RETRY_SECONDS:
+        try:
+            if data.get("kind") == "none" and time.time() - data.get("saved", 0) > NONE_RETRY_SECONDS:
+                return None
+            return Lyrics(data["kind"], [tuple(x) for x in data.get("lines", [])], data.get("source", ""))
+        except (KeyError, TypeError, AttributeError):  # a damaged cache file: look again
             return None
-        return Lyrics(data["kind"], [tuple(x) for x in data.get("lines", [])], data.get("source", ""))
 
     def _save(self, track, lyrics: Lyrics):
         try:
