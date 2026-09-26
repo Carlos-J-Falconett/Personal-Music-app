@@ -67,6 +67,10 @@ class WaveVisualizer(Gtk.DrawingArea):
         player.connect("spectrum", self._on_spectrum)
         player.connect("state-changed", lambda _p, playing: None if playing else self._fall())
         player.connect("track-changed", lambda *_: self._fall())
+        # Only visualizers on screen ask the player for the spectrum (two of the three are
+        # usually hidden, and none is while the window is closed).
+        self.connect("map", lambda *_: player.want_spectrum(True))
+        self.connect("unmap", lambda *_: (player.want_spectrum(False), self._fall()))
         self._themes = getattr(Gio.Application.get_default(), "themes", None)
         if self._themes is not None:
             self._themes.listeners.append(self.queue_draw)
@@ -79,6 +83,8 @@ class WaveVisualizer(Gtk.DrawingArea):
     # ---- data ----
 
     def _on_spectrum(self, _player, magnitudes):
+        if not self.get_mapped():
+            return
         span = len(magnitudes)
         for i, (lo, hi) in enumerate(self._edges):
             a, b = lo / self._band_width, hi / self._band_width

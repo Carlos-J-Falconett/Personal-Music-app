@@ -6,6 +6,7 @@ from gi.repository import Adw, Gio, GLib, Gtk
 
 from ..art import SLIDE_SECONDS_MAX, SLIDE_SECONDS_MIN, THUMB, is_video
 from .artists_view import ArtistItem
+from .silent_video import SilentVideo
 
 
 class ArtistImageDialog(Adw.Dialog):
@@ -142,7 +143,7 @@ class ArtistImageDialog(Adw.Dialog):
     # ---- detail ----
 
     def show_artist(self, name: str, animate: bool = True):
-        tracks = next((t for n, t in self.win.library.artists() if n == name), [])
+        tracks = self.win.library.artist_tracks(name)
         self._detail = ArtistDetailPage(self, name, tracks)
         if animate:
             self.nav.push(self._detail)
@@ -249,7 +250,7 @@ class ArtistDetailPage(Adw.NavigationPage):
 
 class SlideshowPage(Adw.NavigationPage):
     """Black Hole mode's background slideshow: one set of images and videos shown instead of
-    artist images, each for a chosen number of seconds (a video until it ends, if sooner)."""
+    artist images: each image for a chosen number of seconds, each video until it ends."""
 
     def __init__(self, dialog: ArtistImageDialog):
         super().__init__(title="Background Slideshow", tag="slideshow")
@@ -268,8 +269,8 @@ class SlideshowPage(Adw.NavigationPage):
         # Goes through app.slideshow, so the menu's Slideshow item and the saved setting follow.
         self.switch.connect("notify::active", lambda row, _p: self.art.slideshow_enabled != row.get_active()
                             and dialog.win.app.change_action_state("slideshow", GLib.Variant("b", row.get_active())))
-        self.seconds = Adw.SpinRow(title="Seconds per Slide",
-                                   subtitle="Videos move on sooner if they end first",
+        self.seconds = Adw.SpinRow(title="Seconds per Image",
+                                   subtitle="Videos always play to the end",
                                    adjustment=Gtk.Adjustment(lower=SLIDE_SECONDS_MIN, upper=SLIDE_SECONDS_MAX,
                                                              step_increment=1, page_increment=10,
                                                              value=self.art.slideshow_seconds))
@@ -309,6 +310,7 @@ class SlideshowPage(Adw.NavigationPage):
         toolbar.set_content(Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, child=box))
         self.set_child(toolbar)
 
+        self._videos: list[SilentVideo] = []  # the video thumbnails' players
         self._listener = self.refresh
         self.art.slideshow_listeners.append(self._listener)
         self.refresh()
@@ -317,6 +319,12 @@ class SlideshowPage(Adw.NavigationPage):
         """Stop following slideshow changes (the page was popped or the dialog closed)."""
         if self._listener in self.art.slideshow_listeners:
             self.art.slideshow_listeners.remove(self._listener)
+        self._stop_videos()
+
+    def _stop_videos(self):
+        for media in self._videos:
+            media.stop()
+        self._videos = []
 
     def refresh(self):
         if self.switch.get_active() != self.art.slideshow_enabled:
@@ -325,8 +333,10 @@ class SlideshowPage(Adw.NavigationPage):
         if int(self.seconds.get_value()) != seconds:
             self.seconds.set_value(seconds)
         self.caption.set_label(f"Shown instead of artist images while Black Hole mode is on, "
-                               f"changing every {seconds} second{'s' if seconds != 1 else ''}.")
+                               f"each image for {seconds} second{'s' if seconds != 1 else ''} "
+                               f"and each video to its end.")
         self.flow.remove_all()
+        self._stop_videos()
         images = self.art.slideshow_images()
         for path in images:
             self.flow.append(self._thumb(path))
@@ -348,9 +358,9 @@ class SlideshowPage(Adw.NavigationPage):
         overlay.add_overlay(remove)
         if is_video(path):
             # The video's first frame (a paused, silent video shows it once it's ready), plus a film badge.
-            media = Gtk.MediaFile.new_for_filename(str(path))
-            media.set_muted(True)
-            picture.set_paintable(media)
+            media = SilentVideo(path)  # no sound: see silent_video.py
+            picture.set_paintable(media.paintable)
+            self._videos.append(media)  # stopped on the next refresh, or when the page closes
             badge = Gtk.Image(icon_name="video-x-generic-symbolic", halign=Gtk.Align.START,
                               valign=Gtk.Align.END, margin_start=6, margin_bottom=6)
             badge.add_css_class("slide-video-badge")

@@ -56,9 +56,10 @@ class PlaylistsView(Adw.Bin):
     def refresh(self):
         library = self.win.library
         playlists = library.playlists()
+        contents = library.db.playlist_contents()
         self.list.remove_all()
         for p in playlists:
-            self.list.append(self._row(p["id"], p["name"], library.playlist_items(p["id"])))
+            self.list.append(self._row(p["id"], p["name"], library.resolve(contents.get(p["id"], []))))
         n = len(playlists)
         self.count_label.set_text(f"{n} playlist{'s' if n != 1 else ''}")
         self.stack.set_visible_child_name("list" if playlists else "empty")

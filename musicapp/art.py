@@ -5,6 +5,7 @@ import hashlib
 import os
 import shutil
 import threading
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -24,6 +25,9 @@ THUMB = 128
 LARGE = 512
 BACKDROP = 2560  # full-window backdrop, fitted whole: its *long* side, sharp on big and HiDPI windows
 BLUR = 384  # heavily blurred copy that fills the space around a fitted backdrop
+# Backdrop-sized textures take tens of MB each: only the most recent few stay in memory
+# (the showing one, the one fading out, the next slide); the rest reload from the disk cache.
+BACKDROP_TEXTURES_KEPT = 4
 
 
 def _embedded_picture(path: str) -> bytes | None:
@@ -129,6 +133,7 @@ class ArtCache:
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="art")
         self._lock = threading.Lock()
         self._textures: dict[tuple[str, int], Gdk.Texture] = {}
+        self._large_textures: OrderedDict[tuple[str, int], Gdk.Texture] = OrderedDict()
         self._missing: set[str] = set()
         self._inflight: dict[tuple[str, int], list] = {}
         # Called with the artist name after their picture changes, or None when every
@@ -196,7 +201,22 @@ class ArtCache:
     # ---- asynchronous texture loading for the UI ------------------------------
 
     def cached_texture(self, key: str, size: int):
-        return self._textures.get((key, size))
+        return self._cached((key, size))
+
+    def _cached(self, tex_key):
+        if tex_key in self._large_textures:
+            self._large_textures.move_to_end(tex_key)
+            return self._large_textures[tex_key]
+        return self._textures.get(tex_key)
+
+    def _store(self, tex_key, texture):
+        if tex_key[1] >= BACKDROP:
+            self._large_textures[tex_key] = texture
+            self._large_textures.move_to_end(tex_key)
+            while len(self._large_textures) > BACKDROP_TEXTURES_KEPT:
+                self._large_textures.popitem(last=False)
+        else:
+            self._textures[tex_key] = texture
 
     def request_track(self, item, size: int, callback):
         """callback(texture_or_None) is invoked on the main thread."""
@@ -274,8 +294,9 @@ class ArtCache:
         for key in keys:
             for cached in COVER_DIR.glob(f"{key}_*.jpg"):
                 cached.unlink(missing_ok=True)
-            for tex_key in [k for k in self._textures if k[0] == key]:
-                del self._textures[tex_key]
+            for textures in (self._textures, self._large_textures):
+                for tex_key in [k for k in textures if k[0] == key]:
+                    del textures[tex_key]
             self._missing.discard(key)
         for listener in list(self.artist_listeners):
             listener(name)
@@ -368,7 +389,7 @@ class ArtCache:
             listener()
 
     def _request(self, key, size, callback, source):
-        tex = self._textures.get((key, size))
+        tex = self._cached((key, size))
         if tex is not None or key in self._missing:
             callback(tex)
             return
@@ -392,7 +413,7 @@ class ArtCache:
 
     def _deliver(self, key, size, texture):
         if texture is not None:
-            self._textures[(key, size)] = texture
+            self._store((key, size), texture)
         with self._lock:
             callbacks = self._inflight.pop((key, size), [])
         for cb in callbacks:

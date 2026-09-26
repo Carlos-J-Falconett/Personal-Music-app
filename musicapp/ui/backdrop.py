@@ -1,12 +1,12 @@
 """Full-window background showing the playing song's artist image, crossfading between artists.
 The image is fitted whole (never cropped); a blurred, darkened copy of it fills the rest of the window.
 In Black Hole mode, a slideshow of the user's images and videos (if any) replaces the artist image.
-Each slide shows for the chosen number of seconds; a video plays (muted) until then, or until it
-ends if that's sooner."""
+Each image shows for the chosen number of seconds; a video plays (without sound) to its end."""
 
 from gi.repository import GLib, Gtk
 
 from ..art import BACKDROP, BLUR, is_video
+from .silent_video import SilentVideo
 
 FADE_MS = 800
 
@@ -26,8 +26,9 @@ class Backdrop(Gtk.Stack):
         self._slide_index = 0
         self._slide_timer = 0  # ends the showing slide (one-shot)
         self._slideshow_on = False
-        self._media: Gtk.MediaFile | None = None  # the video showing, if any
-        self._loading_media: Gtk.MediaFile | None = None  # a video getting ready to show
+        self._media: SilentVideo | None = None  # the video showing, if any
+        self._loading_media: SilentVideo | None = None  # a video getting ready to show
+        self._failures = 0  # slides in a row that couldn't be shown
         # Two layers that take turns, so the old image fades out as the new one fades in.
         # Each is: blurred copy filling the window → dark veil → the whole image, fitted.
         self._layers = []
@@ -97,10 +98,11 @@ class Backdrop(Gtk.Stack):
     def _show(self, paintable, blurred=None, media=None):
         """Crossfade to a new picture in the hidden layer. A video (media) fills the window with
         a blurred copy of itself; an image uses its pre-blurred texture."""
+        self._failures = 0
         showing = self.get_visible_child_name()
         name = "b" if showing == "a" else "a"
         fill, picture = self._layers[0 if name == "a" else 1]
-        fill.set_paintable(media if media is not None else blurred)
+        fill.set_paintable(media.paintable if media is not None else blurred)
         (fill.add_css_class if media is not None else fill.remove_css_class)("backdrop-video-fill")
         picture.set_paintable(paintable)
         self.set_visible_child_name(name)
@@ -113,8 +115,9 @@ class Backdrop(Gtk.Stack):
     def _release(self, media):
         for fill, picture in self._layers:
             for pic in (fill, picture):
-                if pic.get_paintable() is media:
+                if pic.get_paintable() is media.paintable:
                     pic.set_paintable(None)
+        media.stop()
         return False
 
     @property
@@ -157,7 +160,7 @@ class Backdrop(Gtk.Stack):
         was_running = self._slideshow_on
         self._slideshow_on = False
         self._cancel_timer()
-        self._loading_media = None
+        self._set_loading(None)
         if self._media is not None:
             self._media.pause()
         if was_running or reload_artist:
@@ -182,11 +185,13 @@ class Backdrop(Gtk.Stack):
         path = self._slides[self._slide_index]
         token = ("slide", path)
         self._want = token
+        # Ends an image after the chosen time. For a video it only matters if the video never
+        # gets going (it's cancelled once it shows): a showing video moves on when it ends.
         self._schedule()
         if is_video(path):
             self._load_video(token, path)
         else:
-            self._loading_media = None
+            self._set_loading(None)
             self._load(token, lambda size, cb: self.art.request_slide(path, size, cb))
         if len(self._slides) > 1:
             # Warm up the next image now, so it's ready when its turn comes.
@@ -196,27 +201,32 @@ class Backdrop(Gtk.Stack):
                 self.art.request_slide(upcoming, BLUR, lambda _texture: None)
 
     def _load_video(self, token, path):
-        media = Gtk.MediaFile.new_for_filename(str(path))
-        media.set_muted(True)
+        media = SilentVideo(path)  # no sound: see silent_video.py
         media.set_loop(len(self._slides) == 1)  # alone, it plays on and on
-        self._loading_media = media
+        self._set_loading(media)
 
         def ready(*_):
             if token != self._want or media is not self._loading_media:
                 return  # something newer was asked for meanwhile
             if media.get_error() is not None:
-                self._loading_media = None
-                self._next_slide()  # unplayable: skip it
+                self._set_loading(None)
+                # Unplayable: skip it, but not from inside this call (the next one may fail
+                # at once too), and once every slide has failed, wait for the next slide time.
+                self._failures += 1
+                if self._failures < len(self._slides):
+                    GLib.idle_add(lambda: token == self._want and self._slideshow_on
+                                  and self._next_slide() and False)
                 return
             if not media.is_prepared():
                 return
             self._loading_media = None
-            self._show(media, media=media)
+            self._cancel_timer()  # videos play to their end, however long the slide time
+            self._show(media.paintable, media=media)
             if self.get_mapped():
                 media.play()
 
         def ended(*_):
-            # Done before its time is up: on to the next slide now.
+            # The video is over: on to the next slide.
             if media.get_ended() and media is self._media and self._slideshow_on and len(self._slides) > 1:
                 self._next_slide()
 
@@ -224,6 +234,12 @@ class Backdrop(Gtk.Stack):
         media.connect("notify::error", ready)
         media.connect("notify::ended", ended)
         ready()
+
+    def _set_loading(self, media):
+        """A video that was still getting ready and is no longer wanted is let go."""
+        old, self._loading_media = self._loading_media, media
+        if old is not None and old is not media and old is not self._media:
+            old.stop()
 
     def _next_slide(self):
         if not self._slideshow_active():  # e.g. the queue was cleared
@@ -242,6 +258,7 @@ class Backdrop(Gtk.Stack):
         showing = self._slides[self._slide_index] if self._slides else None
         self._slides = self.art.slideshow_images()
         self._seconds = self.art.slideshow_seconds  # takes effect from the next slide
+        self._failures = 0
         if showing in self._slides:
             self._slide_index = self._slides.index(showing)
             if self._media is not None:

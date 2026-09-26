@@ -22,7 +22,7 @@ def format_total(seconds: float) -> str:
 
 
 def sort_key(item):
-    return (item.artist_key.casefold(), item.album.casefold(), item.disc_no, item.track_no, item.title.casefold())
+    return (item.artist_key.casefold(), item.album.casefold(), item.disc_no, item.track_no, item.title_key)
 
 
 class TrackItem(GObject.Object):
@@ -49,6 +49,7 @@ class TrackItem(GObject.Object):
         self.genre = row["genre"]
         self.year = row["year"]
         self.duration_text = format_time(self.duration)
+        self.title_key = self.title.casefold()  # for sorting
         self.search_text = f"{self.title}\n{self.artist}\n{self.album}\n{self.album_artist}".casefold()
 
     @property
@@ -121,6 +122,7 @@ class Library(GObject.Object):
                 item.favorite = want
         self.sorted_items = sorted(self.items.values(), key=sort_key)
         self._albums = None
+        self._artists = None
         if emit:
             self.emit("changed")
 
@@ -133,13 +135,24 @@ class Library(GObject.Object):
     # ---- artists ----
 
     def artists(self) -> list[tuple[str, list[TrackItem]]]:
-        groups: dict[str, list[TrackItem]] = {}
-        for item in self.sorted_items:
-            groups.setdefault(item.artist_key, []).append(item)
-        return sorted(groups.items(), key=lambda kv: kv[0].casefold())
+        """(artist, tracks) sorted by name. Cached until the next reload."""
+        if self._artists is None:
+            groups: dict[str, list[TrackItem]] = {}
+            for item in self.sorted_items:
+                groups.setdefault(item.artist_key, []).append(item)
+            self._artists = sorted(groups.items(), key=lambda kv: kv[0].casefold())
+            self._artist_index = dict(self._artists)
+            self._artist_folded = [name.casefold() for name, _tracks in self._artists]
+        return self._artists
+
+    def find_artists(self, terms: list[str]) -> list[tuple[str, list[TrackItem]]]:
+        """Artists whose name contains every (casefolded) term."""
+        artists = self.artists()
+        return [a for a, folded in zip(artists, self._artist_folded) if all(t in folded for t in terms)]
 
     def artist_tracks(self, name: str) -> list[TrackItem]:
-        return [i for i in self.sorted_items if i.artist_key == name]
+        self.artists()
+        return list(self._artist_index.get(name, []))
 
     # ---- albums ----
 
@@ -147,13 +160,19 @@ class Library(GObject.Object):
         """Every album, sorted by artist, then year, then title. Cached until the next reload."""
         if self._albums is None:
             self._albums = _group_albums(self.sorted_items)
+            self._albums_by_key = {a.key: a for a in self._albums}
+            self._albums_by_artist: dict[str, list[AlbumItem]] = {}
+            for a in self._albums:
+                self._albums_by_artist.setdefault(a.artist, []).append(a)
         return self._albums
 
     def albums_for_artist(self, name: str) -> list[AlbumItem]:
-        return [a for a in self.all_albums() if a.artist == name]
+        self.all_albums()
+        return list(self._albums_by_artist.get(name, []))
 
     def find_album(self, key) -> AlbumItem | None:
-        return next((a for a in self.all_albums() if a.key == tuple(key)), None)
+        self.all_albums()
+        return self._albums_by_key.get(tuple(key))
 
     # ---- favorites ----
 

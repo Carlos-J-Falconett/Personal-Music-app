@@ -559,8 +559,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _connect_model(self):
         self.library.connect("changed", lambda *_: self.refresh_all())
         self.library.connect("favorites-changed", lambda *_: self._refresh_favorites())
+        # Adding or removing songs also emits playlists-changed, so this covers contents too.
         self.library.connect("playlists-changed", lambda *_: self.playlists_page.refresh())
-        self.library.connect("playlist-contents-changed", lambda *_: self.playlists_page.refresh())
         self.player.connect("error", lambda _p, msg: self.toast(msg))
         self.art.artist_listeners.append(self._on_artist_image_changed)
 

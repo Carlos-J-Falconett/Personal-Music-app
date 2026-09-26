@@ -95,9 +95,10 @@ class Database:
     def file_index(self, root: str) -> dict[str, tuple[float, int]]:
         """{path: (mtime, size)} for every known file under `root`."""
         prefix = root.rstrip("/") + "/"
+        # A range on `path` (rather than substr) lets SQLite use its unique index.
         rows = self._query(
-            "SELECT path, mtime, size FROM tracks WHERE substr(path, 1, ?) = ?",
-            (len(prefix), prefix),
+            "SELECT path, mtime, size FROM tracks WHERE path >= ? AND path < ?",
+            (prefix, prefix + "\U0010ffff"),
         )
         return {r["path"]: (r["mtime"], r["size"]) for r in rows}
 
@@ -156,6 +157,13 @@ class Database:
             "SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position", (playlist_id,)
         )
         return [r[0] for r in rows]
+
+    def playlist_contents(self) -> dict[int, list[int]]:
+        """{playlist id: track ids in order} for every playlist with songs, in one query."""
+        contents: dict[int, list[int]] = {}
+        for r in self._query("SELECT playlist_id, track_id FROM playlist_tracks ORDER BY playlist_id, position"):
+            contents.setdefault(r[0], []).append(r[1])
+        return contents
 
     def add_to_playlist(self, playlist_id: int, track_ids: list[int]) -> int:
         """Append tracks, skipping ones already in the playlist. Returns how many were added."""

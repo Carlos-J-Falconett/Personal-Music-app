@@ -84,7 +84,7 @@ class SearchView(Gtk.Box):
         self._query = text.strip()
         terms = text.casefold().split()
         library = self.win.library
-        self._artists = [(n, t) for n, t in library.artists() if _matches(terms, n.casefold())]
+        self._artists = library.find_artists(terms)
         self._albums = [a for a in library.all_albums() if _matches(terms, a.search_text)]
         self._songs = [i for i in library.sorted_items if _matches(terms, i.search_text)]
 

@@ -74,7 +74,7 @@ class SongList(Gtk.Box):
                                                    css="number-cell track-number"),
                              fixed=40, sorter=lambda a, b: ordering((a.disc_no, a.track_no), (b.disc_no, b.track_no)))
         self._add_column("Song", self._setup_song, self._bind_song, expand=True,
-                         sorter=lambda a, b: ordering(a.title.casefold(), b.title.casefold()))
+                         sorter=lambda a, b: ordering(a.title_key, b.title_key))
         self._add_column("Duration", *self._text_cell(lambda i: i.duration_text, xalign=1, css="number-cell duration-cell"),
                          fixed=84, sorter=lambda a, b: ordering(a.duration, b.duration))
         self._add_column("", self._setup_heart, self._bind_heart, fixed=48)

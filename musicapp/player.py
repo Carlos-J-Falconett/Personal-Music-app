@@ -64,8 +64,10 @@ class Player(GObject.Object):
             spectrum.set_property("bands", SPECTRUM_BANDS)
             spectrum.set_property("threshold", SPECTRUM_THRESHOLD_DB)
             spectrum.set_property("interval", SPECTRUM_INTERVAL_NS)
-            spectrum.set_property("post-messages", True)
+            spectrum.set_property("post-messages", False)  # on while a visualizer is showing
             spectrum.set_property("message-magnitude", True)
+        self._spectrum = spectrum
+        self._spectrum_users = 0
         self._eq = Gst.ElementFactory.make("equalizer-10bands", "equalizer")
         audio_filter = self._build_filter(self._eq, spectrum) if self._eq else spectrum
         if audio_filter:
@@ -448,10 +450,21 @@ class Player(GObject.Object):
         if playing != self._playing:
             self._playing = playing
             self.emit("state-changed", playing)
-        if playing and not self._spectrum_poll:
+        if playing and self._spectrum_users and not self._spectrum_poll:
             self._spectrum_poll = GLib.timeout_add(SPECTRUM_POLL_MS, self._release_spectrum)
 
     # ---- spectrum (visualizer) ----
+
+    def want_spectrum(self, on: bool):
+        """Visualizers call this as they appear (True) and disappear (False). With none on
+        screen (e.g. the window is closed), the spectrum isn't measured or delivered at all."""
+        self._spectrum_users = max(0, self._spectrum_users + (1 if on else -1))
+        wanted = self._spectrum_users > 0
+        if self._spectrum is not None:
+            self._spectrum.set_property("post-messages", wanted)
+        if not wanted:
+            self._spectrum_queue.clear()
+        self._set_playing(self._playing)  # starts the delivery poll if it's now needed
 
     def _running_time(self) -> int | None:
         clock = self._playbin.get_clock()
@@ -473,7 +486,7 @@ class Player(GObject.Object):
         self._spectrum_queue.append((running + (duration if ok_dur else 0), magnitudes))
 
     def _release_spectrum(self):
-        if not self._playing:
+        if not self._playing or not self._spectrum_users:
             self._spectrum_poll = 0
             return False
         now = self._running_time()
@@ -494,6 +507,9 @@ class Player(GObject.Object):
 
     def _on_async_done(self, _bus, _msg):
         self._error_streak = 0
+        # The sound server remembers mute per app and may restore it onto a new stream (e.g.
+        # left muted by another stream of this app): the music itself is never muted.
+        self._playbin.set_property("mute", False)
         if self._pending_seek is not None:
             target, self._pending_seek = self._pending_seek, None
             self._spectrum_queue.clear()
