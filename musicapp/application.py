@@ -1,0 +1,323 @@
+"""Application object: owns the database, library, player, scanner and services."""
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+gi.require_version("Gst", "1.0")
+from gi.repository import Adw, Gdk, Gio, GLib, Gst, Gtk  # noqa: E402
+
+from .art import SLIDE_SECONDS_DEFAULT, ArtCache  # noqa: E402
+from .config import APP_ID, APP_NAME, ICONS_DIR, MUSIC_DIR, PACKAGE_DIR, VERSION  # noqa: E402
+from .database import Database  # noqa: E402
+from .library import Library  # noqa: E402
+from .lyrics import LyricsService  # noqa: E402
+from .mpris import MprisService  # noqa: E402
+from .player import Player, Repeat  # noqa: E402
+from .scanner import Scanner  # noqa: E402
+from .themes import ThemeManager  # noqa: E402
+from .ui.mode_icon import follow_mode  # noqa: E402
+from .ui.window import MainWindow  # noqa: E402
+from .watcher import LibraryWatcher  # noqa: E402
+
+# Entering Black Hole mode: triple-click the About icon, then type this within the time limit.
+BLACK_HOLE_KEYS = "wasd"
+BLACK_HOLE_SECONDS = 5
+
+SHORTCUTS = [
+    ("Playback", [
+        ("Play / Pause", "space"),
+        ("Next Song", "<Control>Right"),
+        ("Previous Song", "<Control>Left"),
+        ("Toggle Shuffle", "<Control>s"),
+        ("Cycle Repeat Mode", "<Control>r"),
+        ("Favorite Current Song", "<Control>d"),
+    ]),
+    ("General", [
+        ("Search", "<Control>f"),
+        ("Switch Player / Queue", "<Control>n"),
+        ("Show / Hide Lyrics", "<Control>l"),
+        ("Show / Hide Equalizer", "<Control>e"),
+        ("Focus on Now Playing", "<Control><Shift>f"),
+        ("Hide / Show Interface (Black Hole mode)", "<Control>h"),
+        ("Rescan Library", "F5"),
+        ("Keyboard Shortcuts", "<Control>question"),
+        ("Quit", "<Control>q"),
+    ]),
+]
+
+
+class MusicApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        GLib.set_application_name(APP_NAME)
+        self.music_dir = MUSIC_DIR
+        self.window = None
+        self._first_scan_done = False
+        self._keys_typed = None  # while waiting for BLACK_HOLE_KEYS: how many were typed so far
+        self._keys_timeout = 0
+
+    # ---- lifecycle ----
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        # The window is dark glass, so keep text light even when the desktop uses light mode.
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+        Gst.init(None)
+
+        display = Gdk.Display.get_default()
+        Gtk.IconTheme.get_for_display(display).add_search_path(str(ICONS_DIR))
+        Gtk.Window.set_default_icon_name(APP_ID)
+        css = Gtk.CssProvider()
+        css.load_from_path(str(PACKAGE_DIR / "style.css"))
+        Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self.db = Database()
+        self.themes = ThemeManager(self.db)  # applies the saved colour theme before any window shows
+        self.library = Library(self.db)
+        self.art = ArtCache()
+        self.lyrics = LyricsService()
+        self.player = Player()
+        self.player.default_tracks = lambda: self.library.sorted_items
+        self.player.eq_lookup = lambda track: self.db.get_track_eq(track.id)
+        self.scanner = Scanner(self.db, self.music_dir)
+        self.watcher = LibraryWatcher(self.scanner, self.music_dir)
+        self.mpris = MprisService(self, self.player, self.art)
+        # Song lists highlight the current song through its `playing` property.
+        self._playing_item = None
+        self.player.connect("track-changed", self._mark_playing)
+
+        self.scanner.connect("started", lambda *_: self._set_status("Checking library…"))
+        self.scanner.connect("progress", self._on_scan_progress)
+        self.scanner.connect("finished", self._on_scan_finished)
+
+        self._install_actions()
+        self._restore_state()
+
+    def do_activate(self):
+        if self.window is None:
+            self.window = MainWindow(self)
+            self.window.add_controller(self._black_hole_keys())
+            if not self.music_dir.is_dir():
+                self.window.toast(f"Music folder not found: {self.music_dir}")
+            else:
+                self.scanner.scan()
+        self.window.present()
+
+    def do_shutdown(self):
+        # A real quit (menu, Ctrl+Q, MPRIS). Closing the window only hides it, see MainWindow.
+        try:
+            if self.window is not None:
+                self.window.save_window_state()
+            self._save_state()
+        except Exception as exc:
+            print(f"[app] could not save state: {exc}")
+        self.player.shutdown()
+        self.watcher.stop()
+        self.mpris.shutdown()
+        self.art.shutdown()
+        self.lyrics.shutdown()
+        self.db.close()
+        Adw.Application.do_shutdown(self)
+
+    # ---- actions ----
+
+    def _install_actions(self):
+        p = self.player
+        actions = {
+            "play-pause": (p.play_pause, None),
+            "next": (p.next, ["<Control>Right"]),
+            "previous": (p.previous, ["<Control>Left"]),
+            "shuffle": (p.toggle_shuffle, ["<Control>s"]),
+            "repeat": (p.cycle_repeat, ["<Control>r"]),
+            "favorite-current": (self._favorite_current, ["<Control>d"]),
+            "rescan": (lambda: self.scanner.scan(), ["F5"]),
+            "shortcuts": (self._show_shortcuts, ["<Control>question"]),
+            "about": (self._show_about, None),
+            "quit": (self.quit, ["<Control>q"]),
+        }
+        for name, (callback, accels) in actions.items():
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", lambda _a, _p, cb=callback: cb())
+            self.add_action(action)
+            if accels:
+                self.set_accels_for_action(f"app.{name}", accels)
+        # Black Hole slideshow on/off. Only enabled (and so only shown in the menu) in Black Hole mode.
+        self.slideshow_action = Gio.SimpleAction.new_stateful("slideshow", None, GLib.Variant("b", True))
+        self.slideshow_action.connect("change-state", self._on_slideshow_state)
+        self.slideshow_action.set_enabled(False)
+        self.add_action(self.slideshow_action)
+        self.art.artist_listeners.append(
+            lambda name: self.slideshow_action.set_enabled(self.art.turned) if name is None else None)
+        self.art.slideshow_listeners.append(self._sync_slideshow_action)
+        self.set_accels_for_action("win.search", ["<Control>f"])
+        self.set_accels_for_action("win.toggle-queue", ["<Control>n"])
+        self.set_accels_for_action("win.toggle-lyrics", ["<Control>l"])
+        self.set_accels_for_action("win.toggle-eq", ["<Control>e"])
+        self.set_accels_for_action("win.focus-mode", ["<Control><Shift>f"])
+        self.set_accels_for_action("win.hide-ui", ["<Control>h"])
+
+    def _on_slideshow_state(self, action, value):
+        self.art.set_slideshow_enabled(value.get_boolean())
+        self.db.set_setting("slideshow-enabled", value.get_boolean())
+
+    def _sync_slideshow_action(self):
+        if self.slideshow_action.get_state().get_boolean() != self.art.slideshow_enabled:
+            self.slideshow_action.set_state(GLib.Variant("b", self.art.slideshow_enabled))
+
+    def _favorite_current(self):
+        if self.player.current is not None:
+            self.library.toggle_favorite(self.player.current)
+
+    def _show_shortcuts(self):
+        dialog = Adw.ShortcutsDialog()
+        for title, items in SHORTCUTS:
+            section = Adw.ShortcutsSection(title=title)
+            for label, accel in items:
+                section.add(Adw.ShortcutsItem(title=label, accelerator=accel))
+            dialog.add(section)
+        dialog.present(self.window)
+
+    def _show_about(self):
+        about = Adw.AboutDialog(
+            application_name=APP_NAME,
+            application_icon=APP_ID,
+            version=VERSION,
+            developer_name="Carlos Falconett",
+            comments="A music player for your local library",
+            license_type=Gtk.License.MIT_X11,
+        )
+        about.present(self.window)
+        # While a dialog is open, its keys don't reach the window's controllers: listen here too.
+        about.add_controller(self._black_hole_keys())
+        icon = _find_icon(about, APP_ID)  # only exists once the dialog is presented
+        if icon is not None:
+            follow_mode(icon, self.art)  # Sun, or the Black Hole in Black Hole mode
+            # Hidden: triple-clicking the icon starts the way into Black Hole mode (a second set
+            # of artist images), or leaves it.
+            click = Gtk.GestureClick()
+            click.connect("pressed", lambda _g, n, _x, _y: self._on_about_icon_clicks() if n == 3 else None)
+            icon.add_controller(click)
+
+    # ---- Black Hole mode ----
+
+    def set_black_hole(self, on: bool):
+        self._stop_waiting_for_keys()
+        self.art.set_turned(on)  # every mode icon flips via the art listeners
+
+    def _on_about_icon_clicks(self):
+        if self.art.turned:
+            self.set_black_hole(False)
+            return
+        # Now BLACK_HOLE_KEYS must be typed, in order, within BLACK_HOLE_SECONDS.
+        self._stop_waiting_for_keys()
+        self._keys_typed = 0
+        self._keys_timeout = GLib.timeout_add(BLACK_HOLE_SECONDS * 1000, self._keys_timed_out)
+
+    def _keys_timed_out(self):
+        self._keys_timeout = 0
+        self._keys_typed = None
+        return False
+
+    def _stop_waiting_for_keys(self):
+        if self._keys_timeout:
+            GLib.source_remove(self._keys_timeout)
+            self._keys_timeout = 0
+        self._keys_typed = None
+
+    def _black_hole_keys(self) -> Gtk.EventControllerKey:
+        keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self._on_black_hole_key)
+        return keys
+
+    def _on_black_hole_key(self, _ctrl, keyval, _code, state):
+        if self._keys_typed is None:
+            return False
+        if _is_modifier(keyval):
+            return False  # e.g. Shift on its own
+        char = chr(Gdk.keyval_to_unicode(keyval) or 0).lower()
+        mods = state & Gtk.accelerator_get_default_mod_mask() & ~Gdk.ModifierType.SHIFT_MASK
+        if mods or char != BLACK_HOLE_KEYS[self._keys_typed]:
+            self._stop_waiting_for_keys()  # a wrong key: start over with the triple-click
+            return False
+        self._keys_typed += 1
+        if self._keys_typed == len(BLACK_HOLE_KEYS):
+            self.set_black_hole(True)
+        return True  # typed letters shouldn't start a search
+
+    # ---- scanning ----
+
+    def _set_status(self, text):
+        if self.window:
+            self.window.set_scan_status(text)
+
+    def _mark_playing(self, _player, track):
+        if self._playing_item is not None:
+            self._playing_item.playing = False
+        self._playing_item = track
+        if track is not None:
+            track.playing = True
+
+    def _on_scan_progress(self, _scanner, done, total):
+        self._set_status(f"Reading tags… {done:,} / {total:,}")
+
+    def _on_scan_finished(self, _scanner, changed, removed):
+        self._set_status(None)
+        if changed or removed:
+            self.library.reload()
+            if self._first_scan_done and self.window:
+                parts = []
+                if changed:
+                    parts.append(f"{changed} added or updated")
+                if removed:
+                    parts.append(f"{removed} removed")
+                self.window.toast("Library updated: " + ", ".join(parts))
+        if not self._first_scan_done:
+            self._first_scan_done = True
+            self.watcher.start()
+
+    # ---- persistence ----
+
+    def _restore_state(self):
+        db = self.db
+        self.player.set_volume(db.get_setting("volume", 0.8))
+        self.player.set_shuffle(db.get_setting("shuffle", False))
+        self.player.set_repeat(Repeat(db.get_setting("repeat", 0)))
+        self.art.set_slideshow_enabled(bool(db.get_setting("slideshow-enabled", True)))
+        self.art.set_slideshow_seconds(db.get_setting("slideshow-seconds", SLIDE_SECONDS_DEFAULT))
+        self.art.slideshow_listeners.append(
+            lambda: db.set_setting("slideshow-seconds", self.art.slideshow_seconds)
+            if db.get_setting("slideshow-seconds", SLIDE_SECONDS_DEFAULT) != self.art.slideshow_seconds else None)
+        # Quitting forgets the song and queue, so each launch starts fresh. Remove the saved
+        # queue that older versions kept.
+        db.delete_setting("queue")
+
+    def _save_state(self):
+        db = self.db
+        db.set_setting("volume", self.player.volume)
+        db.set_setting("shuffle", self.player.shuffle)
+        db.set_setting("repeat", int(self.player.repeat))
+
+
+def main(argv=None) -> int:
+    import sys
+    app = MusicApp()
+    return app.run(argv if argv is not None else sys.argv)
+
+
+def _is_modifier(keyval) -> bool:
+    name = Gdk.keyval_name(keyval) or ""
+    return name.split("_")[0] in ("Shift", "Control", "Alt", "Meta", "Super", "Hyper", "Caps", "ISO", "Num")
+
+
+def _find_icon(widget, icon_name):
+    """The first Gtk.Image showing `icon_name` inside `widget` (e.g. the About dialog's app icon)."""
+    if isinstance(widget, Gtk.Image) and widget.get_icon_name() == icon_name:
+        return widget
+    child = widget.get_first_child()
+    while child is not None:
+        found = _find_icon(child, icon_name)
+        if found is not None:
+            return found
+        child = child.get_next_sibling()
+    return None

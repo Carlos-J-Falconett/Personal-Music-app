@@ -1,0 +1,254 @@
+"""Full-window background showing the playing song's artist image, crossfading between artists.
+The image is fitted whole (never cropped); a blurred, darkened copy of it fills the rest of the window.
+In Black Hole mode, a slideshow of the user's images and videos (if any) replaces the artist image.
+Each slide shows for the chosen number of seconds; a video plays (muted) until then, or until it
+ends if that's sooner."""
+
+from gi.repository import GLib, Gtk
+
+from ..art import BACKDROP, BLUR, is_video
+
+FADE_MS = 800
+
+
+class Backdrop(Gtk.Stack):
+    def __init__(self, win):
+        super().__init__(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=FADE_MS,
+                         hhomogeneous=False, vhomogeneous=False)
+        self.add_css_class("backdrop")
+        self.win = win
+        self.art = win.art
+        self.set_can_target(False)  # purely decorative
+        self._artist: str | None = None
+        self._want = None  # what the next delivered texture must be for: an artist name or ("slide", path)
+        # Slideshow state.
+        self._slides: list = []
+        self._slide_index = 0
+        self._slide_timer = 0  # ends the showing slide (one-shot)
+        self._slideshow_on = False
+        self._media: Gtk.MediaFile | None = None  # the video showing, if any
+        self._loading_media: Gtk.MediaFile | None = None  # a video getting ready to show
+        # Two layers that take turns, so the old image fades out as the new one fades in.
+        # Each is: blurred copy filling the window → dark veil → the whole image, fitted.
+        self._layers = []
+        for name in ("a", "b"):
+            layer = Gtk.Overlay()
+            fill = Gtk.Picture(content_fit=Gtk.ContentFit.COVER, can_shrink=True)
+            fill.add_css_class("backdrop-fill")
+            layer.set_child(fill)
+            veil = Gtk.Box()
+            veil.add_css_class("backdrop-veil")
+            layer.add_overlay(veil)
+            picture = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, can_shrink=True)
+            picture.add_css_class("backdrop-image")
+            layer.add_overlay(picture)
+            self._layers.append((fill, picture))
+            self.add_named(layer, name)
+        self.add_named(Gtk.Box(), "empty")
+        self.set_visible_child_name("empty")
+
+        win.player.connect("track-changed", lambda _p, track: self._show_track(track))
+        self.art.artist_listeners.append(self._on_artist_image_changed)
+        self.art.slideshow_listeners.append(self._on_slides_changed)
+        self._slides = self.art.slideshow_images()
+        self._seconds = self.art.slideshow_seconds
+        # Videos pause while the window is hidden, like the slideshow itself.
+        self.connect("map", lambda *_: self._media.play() if self._media is not None else None)
+        self.connect("unmap", lambda *_: self._media.pause() if self._media is not None else None)
+        self._show_track(win.player.current)
+
+    # ---- artist image ----
+
+    def _show_track(self, track, force=False):
+        if self._slideshow_active():
+            self._start_slideshow()  # keeps running across songs
+            return
+        artist = track.artist_key if track is not None else None
+        if artist == self._artist and not force:
+            return  # same artist: keep the current image
+        self._artist = artist
+        self._want = artist
+        if track is None:
+            self.set_visible_child_name("empty")
+            return
+        self._load(artist, lambda size, cb: self.art.request_artist(artist, track, size, cb))
+
+    def _load(self, token, request):
+        """request(size, callback) fetches one size of the image; show it once the sharp
+        image and its blurred fill are both ready."""
+        def got_sharp(texture):
+            if token != self._want:
+                return  # something newer was requested meanwhile
+            if texture is None:
+                self._apply(token, None, None)
+                return
+            request(BLUR, lambda blurred: self._apply(token, texture, blurred))
+        request(BACKDROP, got_sharp)
+
+    def _apply(self, token, texture, blurred):
+        if token != self._want:
+            return
+        if texture is None:
+            if not isinstance(token, tuple):
+                self.set_visible_child_name("empty")
+            return
+        self._show(texture, blurred)
+
+    def _show(self, paintable, blurred=None, media=None):
+        """Crossfade to a new picture in the hidden layer. A video (media) fills the window with
+        a blurred copy of itself; an image uses its pre-blurred texture."""
+        showing = self.get_visible_child_name()
+        name = "b" if showing == "a" else "a"
+        fill, picture = self._layers[0 if name == "a" else 1]
+        fill.set_paintable(media if media is not None else blurred)
+        (fill.add_css_class if media is not None else fill.remove_css_class)("backdrop-video-fill")
+        picture.set_paintable(paintable)
+        self.set_visible_child_name(name)
+        old, self._media = self._media, media
+        if old is not None and old is not media:
+            old.pause()
+            # Let it fade out on its last frame, then let it go.
+            GLib.timeout_add(FADE_MS + 100, lambda: self._release(old))
+
+    def _release(self, media):
+        for fill, picture in self._layers:
+            for pic in (fill, picture):
+                if pic.get_paintable() is media:
+                    pic.set_paintable(None)
+        return False
+
+    @property
+    def artist(self):
+        return self._artist
+
+    def current_texture(self):
+        name = self.get_visible_child_name()
+        if name not in ("a", "b"):
+            return None
+        return self._layers[0 if name == "a" else 1][1].get_paintable()
+
+    def _on_artist_image_changed(self, name):
+        if name is None:  # Black Hole mode switched: slideshow on/off, or other artist images
+            self._update_mode(reload_artist=True)
+        elif name == self._artist and not self._slideshow_active():
+            self._show_track(self.win.player.current, force=True)
+
+    # ---- Black Hole slideshow ----
+
+    def _slideshow_active(self) -> bool:
+        return (self.art.turned and self.art.slideshow_enabled and bool(self._slides)
+                and self.win.player.current is not None)
+
+    def _update_mode(self, reload_artist=False):
+        if self._slideshow_active():
+            self._start_slideshow()
+        else:
+            self._stop_slideshow(reload_artist)
+
+    def _start_slideshow(self):
+        if self._slideshow_on:
+            return
+        self._slideshow_on = True
+        self._artist = None  # the artist image must be reloaded when the slideshow ends
+        self._slide_index %= len(self._slides)
+        self._show_slide()
+
+    def _stop_slideshow(self, reload_artist=False):
+        was_running = self._slideshow_on
+        self._slideshow_on = False
+        self._cancel_timer()
+        self._loading_media = None
+        if self._media is not None:
+            self._media.pause()
+        if was_running or reload_artist:
+            self._show_track(self.win.player.current, force=True)
+
+    def _cancel_timer(self):
+        if self._slide_timer:
+            GLib.source_remove(self._slide_timer)
+            self._slide_timer = 0
+
+    def _schedule(self):
+        """The showing slide ends after the chosen number of seconds."""
+        self._cancel_timer()
+        self._slide_timer = GLib.timeout_add_seconds(self._seconds, self._on_timer)
+
+    def _on_timer(self):
+        self._slide_timer = 0
+        self._next_slide()
+        return False
+
+    def _show_slide(self):
+        path = self._slides[self._slide_index]
+        token = ("slide", path)
+        self._want = token
+        self._schedule()
+        if is_video(path):
+            self._load_video(token, path)
+        else:
+            self._loading_media = None
+            self._load(token, lambda size, cb: self.art.request_slide(path, size, cb))
+        if len(self._slides) > 1:
+            # Warm up the next image now, so it's ready when its turn comes.
+            upcoming = self._slides[(self._slide_index + 1) % len(self._slides)]
+            if not is_video(upcoming):
+                self.art.request_slide(upcoming, BACKDROP, lambda _texture: None)
+                self.art.request_slide(upcoming, BLUR, lambda _texture: None)
+
+    def _load_video(self, token, path):
+        media = Gtk.MediaFile.new_for_filename(str(path))
+        media.set_muted(True)
+        media.set_loop(len(self._slides) == 1)  # alone, it plays on and on
+        self._loading_media = media
+
+        def ready(*_):
+            if token != self._want or media is not self._loading_media:
+                return  # something newer was asked for meanwhile
+            if media.get_error() is not None:
+                self._loading_media = None
+                self._next_slide()  # unplayable: skip it
+                return
+            if not media.is_prepared():
+                return
+            self._loading_media = None
+            self._show(media, media=media)
+            if self.get_mapped():
+                media.play()
+
+        def ended(*_):
+            # Done before its time is up: on to the next slide now.
+            if media.get_ended() and media is self._media and self._slideshow_on and len(self._slides) > 1:
+                self._next_slide()
+
+        media.connect("notify::prepared", ready)
+        media.connect("notify::error", ready)
+        media.connect("notify::ended", ended)
+        ready()
+
+    def _next_slide(self):
+        if not self._slideshow_active():  # e.g. the queue was cleared
+            self._stop_slideshow(reload_artist=True)
+            return
+        if not self.get_mapped():  # don't churn while the window is hidden; check again later
+            self._schedule()
+            return
+        if len(self._slides) > 1:
+            self._slide_index = (self._slide_index + 1) % len(self._slides)
+            self._show_slide()
+        else:
+            self._schedule()
+
+    def _on_slides_changed(self):
+        showing = self._slides[self._slide_index] if self._slides else None
+        self._slides = self.art.slideshow_images()
+        self._seconds = self.art.slideshow_seconds  # takes effect from the next slide
+        if showing in self._slides:
+            self._slide_index = self._slides.index(showing)
+            if self._media is not None:
+                self._media.set_loop(len(self._slides) == 1)
+        elif self._slides:
+            # The showing slide was removed: the one after it takes its place now.
+            self._slide_index %= len(self._slides)
+            if self._slideshow_on:
+                self._show_slide()
+        self._update_mode()

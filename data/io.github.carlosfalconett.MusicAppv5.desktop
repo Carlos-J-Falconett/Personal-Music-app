@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Sun
+GenericName=Music Player
+Comment=Play and organize your local music library
+Exec=python3 /home/carlosfalconett/PythonVSCode/MusicAppv5/main.py
+Path=/home/carlosfalconett/PythonVSCode/MusicAppv5
+Icon=io.github.carlosfalconett.MusicAppv5
+Terminal=false
+Categories=AudioVideo;Audio;Player;GTK;GNOME;
+Keywords=music;player;audio;songs;playlist;mp3;flac;
+StartupNotify=true
+DBusActivatable=false

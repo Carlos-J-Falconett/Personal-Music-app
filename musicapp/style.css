@@ -1,0 +1,1279 @@
+/* Sun — stylesheet.
+   Layers, bottom to top: desktop → lightly tinted window → artist backdrop (whole image
+   fitted over a blurred copy of itself) → floating glass cards → content.
+   Everything is sized from a few tokens so surfaces, radii and text tones stay consistent. */
+
+window.main-window {
+  /* Palette (a colour theme overrides these; see themes.py). */
+  --text: white;
+  --panel-color: #0d0d11;
+  --window-tint: #08080b;
+  --heart-color: #ff4d5e;
+  /* Every element's own colour. A colour theme may set any of these (themes.py GROUPS);
+     unset, each follows the palette above as it always has.
+     Surfaces and lines take only the hue: their translucency stays as below. */
+  --secondary-text-color: alpha(var(--text), 0.58);
+  --borders-color: var(--text);
+  --highlight-color: var(--text);
+  --scrollbars-color: var(--text);
+  --focus-outline-color: var(--accent-color);
+  --backdrop-dim-color: black;
+  --tabs-background-color: var(--panel-color);
+  --tab-text-color: var(--secondary-text-color);
+  --tab-selected-text-color: var(--text);
+  --tab-selected-color: var(--highlight-color);
+  --search-background-color: var(--panel-color);
+  --search-text-color: var(--text);
+  --menu-button-color: var(--panel-color);
+  --library-background-color: var(--panel-color);
+  --page-title-color: var(--text);
+  --page-subtitle-color: var(--secondary-text-color);
+  --column-headers-color: alpha(var(--secondary-text-color), 0.655);
+  --play-all-color: var(--accent-bg-color);
+  --play-all-text-color: var(--accent-fg-color);
+  --shuffle-all-color: var(--highlight-color);
+  --shuffle-all-text-color: var(--text);
+  --section-titles-color: var(--text);
+  --song-title-color: var(--text);
+  --song-artist-color: var(--secondary-text-color);
+  --track-number-color: var(--secondary-text-color);
+  --duration-color: var(--secondary-text-color);
+  --playing-song-color: var(--accent-color);
+  --row-hover-color: var(--highlight-color);
+  --row-selected-color: var(--accent-bg-color);
+  --heart-empty-color: alpha(var(--text), 0.45);
+  --artist-name-color: var(--text);
+  --album-title-color: var(--text);
+  --card-details-color: alpha(var(--text), 0.6);
+  --playlist-name-color: var(--text);
+  --playlist-details-color: alpha(var(--text), 0.55);
+  --playlist-rows-color: var(--card-bg-color);
+  --playlist-button-color: var(--accent-color);
+  --playlist-badge-color: var(--accent-bg-color);
+  --playlist-badge-text-color: var(--accent-fg-color);
+  --panel-background-color: var(--panel-color);
+  --panel-heading-color: alpha(var(--secondary-text-color), 0.655);
+  --panel-buttons-color: var(--secondary-text-color);
+  --panel-button-active-color: var(--accent-bg-color);
+  --panel-button-active-icon-color: var(--accent-fg-color);
+  --focus-button-color: var(--text);
+  --eq-on-color: var(--accent-color);
+  --now-title-color: var(--text);
+  --now-artist-color: alpha(var(--text), 0.9);
+  --now-album-color: var(--secondary-text-color);
+  --play-button-color: var(--accent-bg-color);
+  --play-button-icon-color: var(--accent-fg-color);
+  --transport-color: var(--text);
+  --mode-off-color: var(--secondary-text-color);
+  --mode-on-color: var(--accent-color);
+  --seek-bar-color: var(--text);
+  --seek-bar-hover-color: var(--accent-bg-color);
+  --seek-track-color: var(--text);
+  --seek-knob-color: var(--text);
+  --time-text-color: var(--secondary-text-color);
+  --volume-icon-color: var(--text);
+  --volume-bar-color: var(--seek-bar-color);
+  --volume-track-color: var(--seek-track-color);
+  --queue-headings-color: var(--text);
+  --now-card-color: var(--accent-bg-color);
+  --now-card-title-color: var(--accent-color);
+  --now-card-artist-color: alpha(var(--text), 0.6);
+  --queue-title-color: var(--text);
+  --queue-artist-color: alpha(var(--text), 0.6);
+  --queue-duration-color: var(--secondary-text-color);
+  --lyrics-background-color: #141418;
+  --lyrics-text-color: var(--text);
+  --lyrics-current-color: var(--accent-color);
+  --lyrics-messages-color: var(--text);
+  --eq-text-color: var(--text);
+  --eq-sliders-color: var(--accent-bg-color);
+  --eq-track-color: var(--text);
+  --eq-reset-color: var(--text);
+  --focus-title-color: var(--text);
+  --focus-artist-color: alpha(var(--text), 0.92);
+  --focus-album-color: alpha(var(--text), 0.62);
+  --focus-time-color: alpha(var(--text), 0.75);
+  --focus-buttons-color: var(--panel-color);
+  --focus-buttons-icon-color: var(--text);
+  --focus-button-active-color: var(--accent-bg-color);
+  --focus-button-active-icon-color: var(--accent-fg-color);
+  --focus-popup-color: var(--panel-color);
+  --focus-shade-color: black;
+  --resize-handle-color: var(--accent-color);
+  --black-hole-label-color: var(--accent-color);
+  /* Derived tones. */
+  --surface: alpha(var(--panel-color), 0.74);
+  --surface-strong: alpha(var(--panel-color), 0.86);
+  --surface-hover: alpha(var(--highlight-color), 0.06);
+  --surface-active: alpha(var(--highlight-color), 0.11);
+  --hairline: alpha(var(--borders-color), 0.07);
+  --muted: var(--secondary-text-color);
+  --faint: alpha(var(--secondary-text-color), 0.655);
+  --radius-card: 18px;
+  --radius-item: 12px;
+  --radius-small: 8px;
+  --shadow-card: 0 10px 34px alpha(black, 0.35), 0 1px 3px alpha(black, 0.25);
+  --shadow-art: 0 18px 48px alpha(black, 0.45), 0 2px 6px alpha(black, 0.3);
+  background-color: alpha(var(--window-tint), 0.55);
+}
+
+/* ---- backdrop ---- */
+.backdrop-image {
+  opacity: 1;
+}
+
+.backdrop-veil {
+  background-color: alpha(var(--backdrop-dim-color), 0.35);
+}
+
+/* Let the backdrop show through Adwaita's normally opaque surfaces. */
+window.main-window toolbarview,
+window.main-window .sidebar-pane,
+window.main-window .content-pane,
+window.main-window navigation-view,
+window.main-window .view,
+window.main-window columnview,
+window.main-window columnview > listview,
+window.main-window columnview > header,
+window.main-window listview,
+window.main-window gridview,
+window.main-window scrolledwindow,
+window.main-window statuspage {
+  background: none;
+  box-shadow: none;
+}
+
+/* ---- floating glass cards (library pages and the Now Playing panel) ---- */
+window.main-window .content-glass {
+  margin: 0 4px 12px 12px;
+  border-radius: var(--radius-card);
+  background-color: alpha(var(--library-background-color), 0.74);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-card);
+}
+
+.now-playing-panel {
+  margin: 0 12px 12px 2px;
+  border-radius: var(--radius-card);
+  background-color: alpha(var(--panel-background-color), 0.86);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-card);
+}
+
+/* Small windows: the panel fills the window without its card, so the artist backdrop shows
+   behind the song and controls; a shade at the bottom keeps them readable. */
+.now-playing-panel.compact {
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  background-color: transparent;
+  background-image:
+    linear-gradient(to top, alpha(var(--focus-shade-color), 0.9) 0%, alpha(var(--focus-shade-color), 0.8) 45%,
+                    transparent 80%),
+    linear-gradient(to bottom, alpha(var(--focus-shade-color), 0.6) 0%, transparent 14%);
+}
+
+.now-playing-panel.compact .now-title {
+  text-shadow: 0 2px 10px alpha(black, 0.5);
+}
+
+.compact-card {
+  padding: 12px;
+  border-radius: var(--radius-card);
+  background-color: alpha(var(--focus-popup-color), 0.86);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-card);
+}
+
+.compact-card .lyrics-card {
+  border-radius: 12px;
+}
+
+/* Nor is anything shaded behind it when it slides over the library. */
+window.main-window overlay-split-view > dimming,
+window.main-window overlay-split-view > shadow,
+window.main-window overlay-split-view > widget.background {
+  background: none;
+}
+
+/* Small windows: the tabs and Now Playing as icons in the top bar. */
+.tab-icons button.tab-icon {
+  min-width: 38px;
+  min-height: 34px;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: var(--tab-text-color);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.tab-icons button.tab-icon:hover {
+  color: var(--tab-selected-text-color);
+  background-color: alpha(var(--tab-selected-color), 0.06);
+}
+
+.tab-icons button.tab-icon:checked {
+  color: var(--tab-selected-text-color);
+  background-color: alpha(var(--tab-selected-color), 0.11);
+}
+
+/* Phone-sized windows: slimmer tab icons, so the whole top bar fits in 400px. */
+window.main-window.phone .tab-icons button.tab-icon {
+  min-width: 32px;
+  padding: 0 4px;
+}
+
+.tab-icons {
+  padding: 3px;
+  border-radius: 999px;
+  background-color: alpha(var(--tabs-background-color), 0.74);
+  border: 1px solid var(--hairline);
+}
+
+window.main-window searchbar > revealer > box {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 2px 12px 6px 12px;
+}
+
+/* ---- header bar ---- */
+window.main-window headerbar {
+  background: none;
+  box-shadow: none;
+  min-height: 46px;
+}
+
+window.main-window headerbar > windowhandle > box {
+  padding: 4px 8px;
+}
+
+/* View switcher tabs as pills. */
+window.main-window viewswitcher {
+  padding: 3px;
+  border-radius: 999px;
+  background-color: alpha(var(--tabs-background-color), 0.74);
+  border: 1px solid var(--hairline);
+}
+
+window.main-window viewswitcher > button.toggle {
+  border-radius: 999px;
+  padding: 4px 16px;
+  margin: 0 1px;
+  color: var(--tab-text-color);
+  background: none;
+  box-shadow: none;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+window.main-window viewswitcher > button.toggle:hover {
+  color: var(--tab-selected-text-color);
+  background-color: alpha(var(--tab-selected-color), 0.06);
+}
+
+window.main-window viewswitcher > button.toggle:checked {
+  color: var(--tab-selected-text-color);
+  background-color: alpha(var(--tab-selected-color), 0.11);
+}
+
+window.main-window viewswitcher > button.toggle:checked label {
+  font-weight: 700;
+}
+
+/* Search as a pill. */
+window.main-window headerbar entry.search {
+  border-radius: 999px;
+  min-height: 34px;
+  padding: 0 12px;
+  color: var(--search-text-color);
+  background-color: alpha(var(--search-background-color), 0.74);
+  border: 1px solid var(--hairline);
+  box-shadow: none;
+}
+
+window.main-window headerbar entry.search:focus-within {
+  border-color: alpha(var(--accent-color), 0.6);
+  box-shadow: 0 0 0 3px alpha(var(--accent-color), 0.18);
+}
+
+/* The Sun / Black Hole menu button. */
+window.main-window headerbar menubutton > button {
+  border-radius: 999px;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  background-color: alpha(var(--menu-button-color), 0.74);
+  border: 1px solid var(--hairline);
+  transition: background-color 150ms ease;
+}
+
+window.main-window headerbar menubutton > button:hover {
+  background-color: var(--surface-active);
+}
+
+window.main-window viewswitcherbar actionbar > revealer > box {
+  background-color: alpha(var(--tabs-background-color), 0.86);
+  border-top: 1px solid var(--hairline);
+  box-shadow: none;
+}
+
+/* ---- buttons ---- */
+window.main-window button.pill {
+  padding: 9px 22px;
+  font-weight: 700;
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+
+window.main-window button.pill.suggested-action {
+  box-shadow: 0 6px 18px alpha(var(--accent-bg-color), 0.35);
+}
+
+window.main-window button.pill.suggested-action:hover {
+  box-shadow: 0 8px 24px alpha(var(--accent-bg-color), 0.5);
+}
+
+window.main-window button.pill:not(.suggested-action) {
+  background-color: var(--surface-hover);
+  border: 1px solid var(--hairline);
+}
+
+window.main-window button.pill:not(.suggested-action):hover {
+  background-color: var(--surface-active);
+}
+
+window.main-window button.pill.play-all {
+  color: var(--play-all-text-color);
+  background-color: var(--play-all-color);
+  box-shadow: 0 6px 18px alpha(var(--play-all-color), 0.35);
+}
+
+window.main-window button.pill.play-all:hover {
+  box-shadow: 0 8px 24px alpha(var(--play-all-color), 0.5);
+}
+
+window.main-window button.pill.shuffle-all {
+  color: var(--shuffle-all-text-color);
+  background-color: alpha(var(--shuffle-all-color), 0.06);
+}
+
+window.main-window button.pill.shuffle-all:hover {
+  background-color: alpha(var(--shuffle-all-color), 0.11);
+}
+
+/* ---- page headers ---- */
+.page-header {
+  padding: 26px 24px 14px 24px;
+}
+
+/* Phone-sized windows: headers and their buttons take less room. */
+window.main-window.phone .page-header {
+  padding: 18px 16px 10px 16px;
+}
+
+window.main-window.phone button.pill {
+  padding: 8px 16px;
+}
+
+.page-title {
+  color: var(--page-title-color);
+  font-size: 1.9em;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.page-subtitle {
+  color: var(--page-subtitle-color);
+  font-size: 0.92em;
+  font-feature-settings: "tnum";
+}
+
+.eyebrow {
+  font-size: 0.72em;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--faint);
+}
+
+.dim {
+  opacity: 0.6;
+}
+
+.number-cell {
+  font-feature-settings: "tnum";
+  color: var(--muted);
+  font-size: 0.92em;
+}
+
+/* ---- song lists ---- */
+window.main-window columnview.song-list {
+  padding: 0 8px 8px 8px;
+}
+
+window.main-window columnview.song-list > header {
+  border-bottom: 1px solid var(--hairline);
+  margin: 0 8px 6px 8px;
+}
+
+window.main-window columnview.song-list > header > button {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 6px 8px;
+}
+
+window.main-window columnview.song-list > header > button label {
+  font-size: 0.72em;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--column-headers-color);
+}
+
+window.main-window columnview.song-list > listview > row {
+  padding-top: 5px;
+  padding-bottom: 5px;
+  border-radius: var(--radius-item);
+  background: none;
+  transition: background-color 120ms ease;
+}
+
+window.main-window columnview.song-list > listview > row:hover {
+  background-color: alpha(var(--row-hover-color), 0.06);
+}
+
+window.main-window columnview.song-list > listview > row:selected {
+  background-color: alpha(var(--row-selected-color), 0.16);
+}
+
+window.main-window columnview.song-list > listview > row:selected:hover {
+  background-color: alpha(var(--row-selected-color), 0.22);
+}
+
+window.main-window columnview.song-list > listview > row > cell {
+  border: none;
+}
+
+.song-title {
+  color: var(--song-title-color);
+  font-weight: 600;
+}
+
+.song-artist {
+  color: var(--song-artist-color);
+}
+
+.track-number {
+  color: var(--track-number-color);
+}
+
+.duration-cell {
+  color: var(--duration-color);
+}
+
+.section-title {
+  color: var(--section-titles-color);
+}
+
+columnview.song-list .playing-row {
+  color: var(--playing-song-color);
+  font-weight: 700;
+}
+
+/* The heart and playlists buttons share one size, so they line up wherever they sit together. */
+.heart-button,
+menubutton.playlist-button > button {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 2px;
+  border-radius: 9999px;
+}
+
+.heart-button {
+  color: var(--heart-empty-color);
+  transition: color 150ms ease;
+}
+
+row:hover .heart-button,
+.heart-button:hover {
+  color: alpha(var(--heart-empty-color), 2.2222);
+}
+
+.heart-button.favorited {
+  color: var(--heart-color);
+}
+
+/* Playlists button beside the heart: dim until the song is in a playlist, then accent with a count. */
+menubutton.playlist-button > button {
+  opacity: 0.45;
+  transition: opacity 150ms ease, color 150ms ease;
+}
+
+menubutton.playlist-button > button:hover,
+menubutton.playlist-button > button:checked,
+menubutton.playlist-button.in-playlist > button {
+  opacity: 1;
+}
+
+menubutton.playlist-button.in-playlist > button {
+  color: var(--playlist-button-color);
+}
+
+.playlist-count {
+  min-width: 13px;
+  min-height: 13px;
+  margin: -5px -7px 0 0;
+  padding: 0 3px;
+  border-radius: 9999px;
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--playlist-badge-text-color);
+  background-color: var(--playlist-badge-color);
+  box-shadow: 0 0 0 1.5px alpha(black, 0.45);
+}
+
+/* ---- menus, popovers and dialogs: the same glass as the rest of the app ---- */
+window.main-window {
+  --menu-bg: mix(var(--panel-color), var(--text), 0.07);
+  --dialog-surface: mix(var(--panel-color), var(--text), 0.05);
+}
+
+window.main-window popover {
+  --popover-bg-color: var(--menu-bg);
+  --popover-fg-color: var(--text);
+}
+
+window.main-window popover > contents {
+  border: 1px solid var(--hairline);
+  box-shadow: 0 16px 40px alpha(black, 0.45), 0 2px 6px alpha(black, 0.3);
+}
+
+popover.app-menu > contents {
+  padding: 6px;
+  border-radius: 16px;
+}
+
+popover.app-menu button.menu-row {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-weight: 500;
+  color: var(--text);
+  background: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+popover.app-menu button.menu-row:hover {
+  background-color: var(--surface-hover);
+}
+
+popover.app-menu button.menu-row:active,
+popover.app-menu button.menu-row:focus-visible {
+  background-color: var(--surface-active);
+}
+
+popover.app-menu button.menu-row.destructive:hover {
+  color: var(--destructive-color);
+  background-color: alpha(var(--destructive-color), 0.1);
+}
+
+popover.app-menu .menu-icon {
+  opacity: 0.72;
+}
+
+popover.app-menu .menu-accel,
+popover.app-menu .menu-detail {
+  color: var(--faint);
+  font-size: 0.85em;
+  font-feature-settings: "tnum";
+}
+
+popover.app-menu .menu-arrow {
+  opacity: 0.45;
+}
+
+popover.app-menu .menu-section {
+  padding: 8px 10px 4px 10px;
+  font-size: 0.7em;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+}
+
+popover.app-menu separator.menu-separator {
+  margin: 5px 8px;
+  min-height: 1px;
+  background-color: var(--hairline);
+}
+
+popover.app-menu .menu-header {
+  padding: 8px 10px 10px 10px;
+}
+
+popover.app-menu .menu-title {
+  font-weight: 800;
+  font-size: 1.05em;
+}
+
+popover.app-menu .menu-subtitle {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+popover.app-menu .menu-header .cover {
+  border-radius: 8px;
+}
+
+popover.app-menu .menu-stack-icon {
+  border-radius: 8px;
+  background-color: var(--surface-active);
+}
+
+popover.app-menu .menu-back {
+  margin-bottom: 2px;
+}
+
+popover.app-menu .menu-back-title {
+  font-weight: 700;
+}
+
+popover.app-menu .menu-note {
+  padding: 8px 10px;
+  color: var(--muted);
+}
+
+popover.app-menu .menu-check {
+  min-width: 18px;
+  min-height: 18px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1.5px alpha(var(--text), 0.3);
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+popover.app-menu .menu-check image {
+  -gtk-icon-size: 12px;
+  opacity: 0;
+}
+
+popover.app-menu .menu-check.checked {
+  background-color: var(--accent-bg-color);
+  box-shadow: none;
+  color: var(--accent-fg-color);
+}
+
+popover.app-menu .menu-check.checked image {
+  opacity: 1;
+}
+
+popover.app-menu switch {
+  transform: scale(0.85);
+}
+
+/* Dialogs: a glass sheet, soft cards, pill entries. */
+window.main-window dialog {
+  --window-bg-color: var(--dialog-surface);
+  --dialog-bg-color: var(--dialog-surface);
+  --card-bg-color: alpha(var(--text), 0.045);
+  --card-shade-color: var(--hairline);
+}
+
+window.main-window floating-sheet > sheet {
+  border-radius: 18px;
+  outline: 1px solid var(--hairline);
+  box-shadow: 0 24px 60px alpha(black, 0.5), 0 2px 8px alpha(black, 0.3);
+}
+
+window.main-window dialog headerbar {
+  background: none;
+  box-shadow: none;
+}
+
+window.main-window dialog list.boxed-list {
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+
+window.main-window dialog list.boxed-list > row:hover {
+  background-color: var(--surface-hover);
+}
+
+window.main-window dialog entry,
+window.main-window dialog row.entry {
+  border-radius: 12px;
+}
+
+window.main-window dialog entry.search,
+window.main-window dialog entry.pill-entry {
+  border-radius: 999px;
+  min-height: 36px;
+  padding: 0 14px;
+  background-color: alpha(var(--text), 0.06);
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+
+window.main-window dialog entry:focus-within {
+  box-shadow: 0 0 0 1px alpha(var(--accent-color), 0.6), 0 0 0 4px alpha(var(--accent-color), 0.18);
+}
+
+.slideshow-card {
+  padding: 4px 0;
+}
+
+.slideshow-card .icon-tile {
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 10px;
+  color: var(--accent-fg-color);
+  background-color: var(--accent-bg-color);
+}
+
+.artist-detail-avatar {
+  box-shadow: var(--shadow-art);
+  border-radius: 999px;
+}
+
+/* ---- artist & album grids ---- */
+gridview.card-grid {
+  padding: 0 12px 12px 12px;
+}
+
+gridview.card-grid > child {
+  padding: 12px;
+  border-radius: 16px;
+  transition: background-color 150ms ease;
+}
+
+gridview.card-grid > child:hover {
+  background-color: var(--surface-hover);
+}
+
+flowbox.card-flow > flowboxchild {
+  padding: 10px;
+  border-radius: 16px;
+  transition: background-color 150ms ease;
+}
+
+flowbox.card-flow > flowboxchild:hover {
+  background-color: var(--surface-hover);
+}
+
+button.card-button {
+  border-radius: 16px;
+}
+
+window.main-window avatar {
+  box-shadow: 0 6px 18px alpha(black, 0.35), 0 0 0 1px var(--hairline);
+}
+
+.artist-name,
+.album-title {
+  font-weight: 700;
+}
+
+.artist-name {
+  color: var(--artist-name-color);
+}
+
+.album-title {
+  color: var(--album-title-color);
+}
+
+.card-detail.dim {
+  opacity: 1;
+  color: var(--card-details-color);
+}
+
+/* ---- playlists ---- */
+list.boxed-list.playlists-list {
+  background-color: var(--playlist-rows-color);
+}
+
+row.playlist-row label.title {
+  color: var(--playlist-name-color);
+}
+
+row.playlist-row label.subtitle {
+  opacity: 1;
+  color: var(--playlist-details-color);
+}
+
+/* ---- cover art ---- */
+.cover {
+  border-radius: var(--radius-small);
+  background-color: alpha(currentColor, 0.08);
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+
+.cover-large {
+  border-radius: 16px;
+  background-color: alpha(currentColor, 0.08);
+  box-shadow: var(--shadow-art);
+}
+
+.cover-placeholder {
+  opacity: 0.35;
+}
+
+/* ---- Now Playing panel ---- */
+.panel-header {
+  padding: 0 2px;
+}
+
+.panel-header .heading {
+  font-size: 0.78em;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--panel-heading-color);
+}
+
+.panel-header button.toggle {
+  min-width: 34px;
+  min-height: 34px;
+  color: var(--panel-buttons-color);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.panel-header button.toggle:hover {
+  color: var(--text);
+  background-color: var(--surface-hover);
+}
+
+.panel-header button.toggle:checked {
+  color: var(--panel-button-active-icon-color);
+  background-color: var(--panel-button-active-color);
+}
+
+.panel-header button.circular:not(.toggle) {
+  color: var(--focus-button-color);
+}
+
+.now-title {
+  color: var(--now-title-color);
+  font-size: 1.5em;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+}
+
+.artist-link,
+.album-link {
+  padding: 2px 6px;
+  margin-left: -6px;
+  min-height: 0;
+}
+
+.artist-link {
+  font-weight: 600;
+  color: var(--now-artist-color);
+}
+
+.album-link {
+  color: var(--now-album-color);
+  font-size: 0.9em;
+}
+
+/* Slim sliders; the knob appears on hover or while dragging. */
+.player-controls scale trough,
+.player-controls scale highlight {
+  min-height: 4px;
+  border-radius: 999px;
+}
+
+.player-controls scale trough {
+  background-color: alpha(var(--seek-track-color), 0.14);
+}
+
+.player-controls scale highlight {
+  background-color: var(--seek-bar-color);
+}
+
+.player-controls scale.volume-scale trough {
+  background-color: alpha(var(--volume-track-color), 0.14);
+}
+
+.player-controls scale.volume-scale highlight {
+  background-color: var(--volume-bar-color);
+}
+
+.player-controls scale:hover highlight,
+.player-controls scale:active highlight {
+  background-color: var(--seek-bar-hover-color);
+}
+
+.player-controls button.volume-button {
+  color: var(--volume-icon-color);
+}
+
+.player-controls scale slider {
+  min-width: 14px;
+  min-height: 14px;
+  margin: -6px;
+  background-color: var(--seek-knob-color);
+  box-shadow: 0 1px 4px alpha(black, 0.4);
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.player-controls scale:hover slider,
+.player-controls scale:active slider,
+.player-controls scale:focus-visible slider {
+  opacity: 1;
+}
+
+.time-label {
+  font-size: 0.8em;
+  font-feature-settings: "tnum";
+  color: var(--time-text-color);
+}
+
+/* Transport. */
+.play-button {
+  min-width: 58px;
+  min-height: 58px;
+  box-shadow: 0 8px 24px alpha(var(--play-button-color), 0.45);
+  transition: box-shadow 150ms ease, background-color 150ms ease;
+}
+
+button.play-button.suggested-action {
+  color: var(--play-button-icon-color);
+  background-color: var(--play-button-color);
+}
+
+.play-button:hover {
+  box-shadow: 0 10px 30px alpha(var(--play-button-color), 0.6);
+}
+
+.play-button image {
+  -gtk-icon-size: 24px;
+}
+
+.player-controls button.transport {
+  min-width: 44px;
+  min-height: 44px;
+  color: var(--transport-color);
+}
+
+.player-controls button.transport image {
+  -gtk-icon-size: 20px;
+}
+
+.player-controls .mode-button {
+  min-width: 40px;
+  min-height: 40px;
+  color: var(--mode-off-color);
+}
+
+.player-controls .mode-button.active {
+  color: var(--mode-on-color);
+  background-image: radial-gradient(circle at 50% 88%, var(--mode-on-color) 2px, transparent 2.5px);
+}
+
+/* The EQ button glows when the playing song has its own EQ. */
+.panel-header button.toggle.eq-active:not(:checked) {
+  color: var(--eq-on-color);
+}
+
+/* Queue view. */
+listview.up-next {
+  background: none;
+}
+
+listview.up-next > row {
+  border-radius: 10px;
+  transition: background-color 120ms ease;
+}
+
+listview.up-next > row:hover {
+  background-color: var(--surface-hover);
+}
+
+.queue-row image.dim {
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+row:hover .queue-row image.dim {
+  opacity: 0.6;
+}
+
+.now-card {
+  padding: 10px;
+  border-radius: var(--radius-item);
+  background-color: alpha(var(--now-card-color), 0.14);
+  border: 1px solid alpha(var(--now-card-color), 0.25);
+}
+
+.now-card-title {
+  font-weight: 700;
+  color: var(--now-card-title-color);
+}
+
+.now-card-artist.dim {
+  opacity: 1;
+  color: var(--now-card-artist-color);
+}
+
+.queue-heading {
+  color: var(--queue-headings-color);
+}
+
+.queue-title {
+  color: var(--queue-title-color);
+}
+
+.queue-artist.dim {
+  opacity: 1;
+  color: var(--queue-artist-color);
+}
+
+.queue-row .queue-duration {
+  color: var(--queue-duration-color);
+}
+
+.queue-row.drop-target {
+  box-shadow: inset 0 2px var(--accent-color);
+}
+
+/* ---- lyrics (back of the Now Playing card) ---- */
+.lyrics-card {
+  border-radius: 16px;
+  background-color: var(--lyrics-background-color);
+  box-shadow: var(--shadow-art);
+}
+
+.lyrics-bg {
+  filter: blur(18px) brightness(0.6);
+}
+
+.lyrics-dim {
+  background-color: alpha(black, 0.45);
+}
+
+.lyric-line {
+  color: var(--lyrics-text-color);
+  font-size: 1.05em;
+  font-weight: 700;
+  transition: opacity 250ms ease, color 250ms ease;
+}
+
+.lyric-upcoming {
+  opacity: 0.55;
+}
+
+.lyric-past {
+  opacity: 0.35;
+}
+
+.lyric-current {
+  opacity: 1;
+  color: var(--lyrics-current-color);
+  font-size: 1.2em;
+}
+
+.lyrics-message,
+.lyrics-credit {
+  color: var(--lyrics-messages-color);
+}
+
+.lyrics-credit {
+  font-size: 0.75em;
+  opacity: 0.6;
+}
+
+.lyrics-card image,
+.lyrics-card button {
+  color: var(--lyrics-messages-color);
+}
+
+/* ---- equalizer (back of the Now Playing card) ---- */
+.eq-card label,
+.eq-card button,
+.eq-card image {
+  color: var(--eq-text-color);
+}
+
+.eq-status {
+  opacity: 0.7;
+}
+
+.eq-value {
+  font-size: 0.75em;
+  font-feature-settings: "tnum";
+  opacity: 0.85;
+}
+
+.eq-freq {
+  font-size: 0.75em;
+  opacity: 0.7;
+}
+
+/* The sliders stretch to fill the card; these are only how small they may get, so the
+   equalizer still fits in small windows. */
+.eq-scale {
+  min-height: 110px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.eq-scale trough {
+  min-width: 4px;
+  border-radius: 999px;
+  background-color: alpha(var(--eq-track-color), 0.18);
+}
+
+.eq-scale highlight {
+  border-radius: 999px;
+  background-color: var(--eq-sliders-color);
+}
+
+.eq-reset {
+  background-color: alpha(var(--eq-reset-color), 0.14);
+}
+
+.eq-reset:disabled {
+  opacity: 0.45;
+}
+
+/* ---- Now Playing resize handle ---- */
+.panel-handle {
+  background: linear-gradient(to right, transparent 3px, alpha(var(--text), 0.0) 3px,
+                              alpha(var(--text), 0.0) 5px, transparent 5px);
+  transition: background 150ms ease;
+}
+
+.panel-handle:hover {
+  background: linear-gradient(to right, transparent 3px, var(--resize-handle-color) 3px,
+                              var(--resize-handle-color) 5px, transparent 5px);
+}
+
+/* ---- scrollbars and focus ---- */
+window.main-window scrollbar slider {
+  min-width: 6px;
+  min-height: 6px;
+  background-color: alpha(var(--scrollbars-color), 0.25);
+}
+
+window.main-window scrollbar:hover slider {
+  background-color: alpha(var(--scrollbars-color), 0.4);
+}
+
+window.main-window *:focus-visible {
+  outline-color: alpha(var(--focus-outline-color), 0.7);
+}
+
+/* ---- Black Hole mode ---- */
+/* The Sun / Black Hole icons flip edge-on, swap, and flip back (see ui/mode_icon.py). */
+@keyframes mode-flip-out {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(90deg); }
+}
+
+@keyframes mode-flip-in {
+  from { transform: rotateY(-90deg); }
+  to { transform: rotateY(0deg); }
+}
+
+image.mode-flip-out {
+  animation: mode-flip-out 180ms ease-in forwards;
+}
+
+image.mode-flip-in {
+  animation: mode-flip-in 180ms ease-out;
+}
+
+.black-hole-badge {
+  color: var(--black-hole-label-color);
+  font-weight: 700;
+  font-size: 0.85em;
+}
+
+/* Black Hole background slideshow thumbnails. */
+.slide-thumb {
+  border-radius: 10px;
+}
+
+button.slide-remove {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  color: var(--text);
+  background-color: alpha(black, 0.6);
+}
+
+.slide-video-badge {
+  padding: 3px;
+  border-radius: 6px;
+  color: white;
+  background-color: alpha(black, 0.6);
+}
+
+/* A video slide's full-window fill: the video itself, blurred like the image slides' fill. */
+.backdrop-video-fill {
+  filter: blur(30px) brightness(0.8);
+}
+
+button.slide-remove:hover {
+  background-color: alpha(black, 0.8);
+}
+
+/* ---- focus view (whole window = Now Playing) ---- */
+.focus-veil {
+  background-image:
+    linear-gradient(to top, alpha(var(--focus-shade-color), 0.72) 0%, alpha(var(--focus-shade-color), 0.35) 30%,
+                    transparent 55%),
+    linear-gradient(to bottom, alpha(var(--focus-shade-color), 0.35) 0%, transparent 18%);
+}
+
+.focus-title {
+  font-size: 2.4em;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--focus-title-color);
+  text-shadow: 0 2px 12px alpha(black, 0.5);
+}
+
+button.focus-artist {
+  font-size: 1.1em;
+  font-weight: 600;
+  color: var(--focus-artist-color);
+  padding: 2px 8px;
+  min-height: 0;
+}
+
+button.focus-album,
+label.focus-album {
+  color: var(--focus-album-color);
+  padding: 2px 8px;
+  min-height: 0;
+}
+
+label.focus-album {
+  padding: 0;
+}
+
+button.focus-chip {
+  min-width: 48px;
+  min-height: 48px;
+  color: var(--focus-buttons-icon-color);
+  background-color: alpha(var(--focus-buttons-color), 0.74);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-card);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+button.focus-chip:hover {
+  background-color: alpha(var(--focus-buttons-color), 0.86);
+}
+
+button.focus-chip:checked {
+  color: var(--focus-button-active-icon-color);
+  background-color: var(--focus-button-active-color);
+}
+
+.focus-popup {
+  border-radius: var(--radius-card);
+  background-color: alpha(var(--focus-popup-color), 0.86);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-card);
+}
+
+.focus-bottom .time-label {
+  color: var(--focus-time-color);
+}
