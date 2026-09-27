@@ -483,8 +483,9 @@ class Player(GObject.Object):
     # ---- spectrum (visualizer) ----
 
     def want_spectrum(self, on: bool):
-        """Visualizers call this as they appear (True) and disappear (False). With none on
-        screen (e.g. the window is closed), the spectrum isn't measured or delivered at all."""
+        """The main window and the visualizers call this as they appear (True) and disappear
+        (False). While any of them is on screen the spectrum is measured and delivered; with none
+        (the window is closed), it isn't measured at all."""
         self._spectrum_users = max(0, self._spectrum_users + (1 if on else -1))
         wanted = self._spectrum_users > 0
         if self._spectrum is not None:

@@ -162,8 +162,9 @@ and cached.
 `audioconvert ! equalizer-10bands ! audioconvert ! spectrum`. The queue keeps the tracks in their
 original order plus a separate play order, so shuffle can be turned off without losing your
 place. Each song loads its own saved EQ. Spectrum results are buffered and released when the
-audio they describe is heard, so the visualizer is in sync. The spectrum is only measured while a
-visualizer is on screen. Unplayable files are skipped with a message.
+audio they describe is heard, so the visualizer is in sync. The spectrum is measured only while the
+window is on screen (so a wave hidden behind the lyrics or equalizer is in step the moment it's
+back), not while the app plays in the background. Unplayable files are skipped with a message.
 
 **Listening history** (`stats.py`, `ui/stats_view.py`). `ListeningRecorder` follows the
 player and stores one row per listening session in the `plays` table. Each row keeps the title,

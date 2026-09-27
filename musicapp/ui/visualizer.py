@@ -71,10 +71,11 @@ class WaveVisualizer(Gtk.DrawingArea):
         player.connect("spectrum", self._on_spectrum)
         player.connect("state-changed", lambda _p, playing: None if playing else self._fall())
         player.connect("track-changed", lambda *_: self._fall())
-        # Only visualizers on screen ask the player for the spectrum (two of the three are
-        # usually hidden, and none is while the window is closed).
-        self.connect("map", lambda *_: player.want_spectrum(True))
-        self.connect("unmap", lambda *_: (player.want_spectrum(False), self._fall()))
+        # The main window keeps the spectrum coming while it's on screen (MainWindow), so a wave
+        # hidden behind the lyrics, equalizer or queue keeps following the song, and is in step
+        # the moment it's shown again. A visualizer on screen asks for it too.
+        self.connect("map", lambda *_: (player.want_spectrum(True), self._catch_up()))
+        self.connect("unmap", lambda *_: player.want_spectrum(False))
         self._themes = getattr(Gio.Application.get_default(), "themes", None)
         if self._themes is not None:
             self._themes.listeners.append(self.queue_draw)
@@ -87,9 +88,8 @@ class WaveVisualizer(Gtk.DrawingArea):
     # ---- data ----
 
     def _on_spectrum(self, _player, magnitudes):
-        """A new spectrum result: map the bands onto BINS log-spaced bins (0..1) as targets."""
-        if not self.get_mapped():
-            return
+        """A new spectrum result: map the bands onto BINS log-spaced bins (0..1) as targets.
+        Also while hidden (it's cheap), so the wave is up to date when it's shown again."""
         span = len(magnitudes)
         for i, (lo, hi) in enumerate(self._edges):
             a, b = lo / self._band_width, hi / self._band_width
@@ -112,9 +112,16 @@ class WaveVisualizer(Gtk.DrawingArea):
         self._targets = [0.0] * BINS
         self._animate()
 
+    def _catch_up(self):
+        """Shown again: jump straight to the current levels (no rise from the resting lines)."""
+        self._levels = list(self._targets)
+        self._peak = max(self._peak, max(self._levels), GAIN_FLOOR)
+        self.queue_draw()
+        self._animate()
+
     def _animate(self):
-        """Make sure the frame-clock animation is running."""
-        if not self._tick_id:
+        """Make sure the frame-clock animation is running (only on screen: hidden, it has no frames)."""
+        if not self._tick_id and self.get_mapped():
             self._tick_id = self.add_tick_callback(self._on_tick)
 
     def _on_tick(self, _widget, _clock):

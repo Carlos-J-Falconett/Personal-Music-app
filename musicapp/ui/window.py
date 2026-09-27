@@ -94,6 +94,11 @@ class MainWindow(Adw.ApplicationWindow):
         keys.connect("key-pressed", self._on_key_pressed)
         self.add_controller(keys)
         self.connect("close-request", self._on_close)
+        # While the window is on screen the audio is analysed for the waves, even when every wave is
+        # hidden (behind lyrics, EQ, the queue), so they're in step as soon as they're back. Closed
+        # (music in the background), nothing is analysed.
+        self.connect("map", lambda *_: self.player.want_spectrum(True))
+        self.connect("unmap", lambda *_: self.player.want_spectrum(False))
 
     # ---- layout ----
 
