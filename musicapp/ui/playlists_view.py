@@ -54,6 +54,7 @@ class PlaylistsView(Adw.Bin):
         self.nav.add(Adw.NavigationPage(title="Playlists", tag=ROOT_TAG, child=box))
 
     def refresh(self):
+        """Rebuild the playlist list, and refresh (or leave) an open playlist page."""
         library = self.win.library
         playlists = library.playlists()
         contents = library.db.playlist_contents()
@@ -68,6 +69,7 @@ class PlaylistsView(Adw.Bin):
             self.nav.pop_to_tag(ROOT_TAG)
 
     def _row(self, pid: int, name: str, items: list) -> Adw.ActionRow:
+        """A playlist row: name, song count and length, Play, and a menu to rename or delete."""
         row = Adw.ActionRow(use_markup=False, activatable=True, title_lines=1)
         row.add_css_class("playlist-row")
         row.set_title(name)
@@ -89,6 +91,7 @@ class PlaylistsView(Adw.Bin):
         return row
 
     def show_playlist(self, pid: int):
+        """Open a playlist's page."""
         visible = self.nav.get_visible_page()
         if isinstance(visible, PlaylistPage) and visible.playlist_id == pid:
             return
@@ -96,11 +99,14 @@ class PlaylistsView(Adw.Bin):
 
     @property
     def open_playlist_id(self):
+        """The id of the playlist whose page is open, or None."""
         visible = self.nav.get_visible_page()
         return visible.playlist_id if isinstance(visible, PlaylistPage) else None
 
 
 class PlaylistPage(Adw.NavigationPage):
+    """One playlist's songs, with Play/Shuffle, rename and delete; songs can be removed from it."""
+
     def __init__(self, view: PlaylistsView, pid: int):
         super().__init__(title="Playlist", tag=f"playlist:{pid}")
         self.view = view
@@ -130,6 +136,7 @@ class PlaylistPage(Adw.NavigationPage):
         self.refresh()
 
     def refresh(self) -> bool:
+        """Reload the name and songs. False if the playlist was deleted."""
         name = self.win.library.playlist_name(self.playlist_id)
         if name is None:
             return False

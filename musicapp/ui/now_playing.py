@@ -53,6 +53,7 @@ class SongInfo(Gtk.Box):
         self._sync()
 
     def _sync(self):
+        """Show the playing song (or "Not Playing")."""
         track = self.player.current
         self.artist.set_visible(track is not None)
         self.album.set_visible(track is not None)
@@ -64,16 +65,22 @@ class SongInfo(Gtk.Box):
         self.album.set_label(f"{track.album} · {track.year}" if track.year else track.album)
 
     def _goto_artist(self, *_):
+        """Go to the playing song's artist."""
         if self.player.current:
             self.win.show_artist(self.player.current.artist_key)
 
     def _goto_album(self, *_):
+        """Go to the playing song's album."""
         t = self.player.current
         if t:
             self.win.show_album((t.artist_key, t.album))
 
 
 class NowPlayingPanel(Gtk.Box):
+    """The Now Playing panel (see the module docstring). Docked, it shows the player view (cover card,
+    song, wave, controls) or the queue; the cover card flips to lyrics or the equalizer. Compact (small
+    windows), the whole view flips to the queue, lyrics or equalizer."""
+
     def __init__(self, win):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.add_css_class("now-playing-panel")
@@ -136,13 +143,16 @@ class NowPlayingPanel(Gtk.Box):
     # ---- public ----
 
     def toggle_queue(self):
+        """Ctrl+N: show or hide the queue."""
         self.queue_button.set_active(not self.queue_button.get_active())
 
     def toggle_lyrics(self):
+        """Ctrl+L: show or hide the lyrics (when a song is loaded)."""
         if self.lyrics_button.get_sensitive():
             self.lyrics_button.set_active(not self.lyrics_button.get_active())
 
     def toggle_eq(self):
+        """Ctrl+E: show or hide the equalizer (when available and a song is loaded)."""
         if self.eq_button.get_visible() and self.eq_button.get_sensitive():
             self.eq_button.set_active(not self.eq_button.get_active())
 
@@ -160,6 +170,7 @@ class NowPlayingPanel(Gtk.Box):
     # ---- buttons ----
 
     def _on_queue_toggled(self, button):
+        """The queue button: slide to the queue view (docked) or flip to it (compact)."""
         showing = button.get_active()
         button.set_tooltip_text("Hide Queue (Ctrl+N)" if showing else "Show Queue (Ctrl+N)")
         if self._compact:
@@ -172,6 +183,7 @@ class NowPlayingPanel(Gtk.Box):
         self.heading.set_text(HEADINGS["queue" if showing else None])
 
     def _on_lyrics_toggled(self, button):
+        """The lyrics button: flip the cover card (docked) or the view (compact) to the lyrics."""
         showing = button.get_active()
         button.set_tooltip_text("Hide Lyrics (Ctrl+L)" if showing else "Show Lyrics (Ctrl+L)")
         if self._compact:
@@ -182,6 +194,7 @@ class NowPlayingPanel(Gtk.Box):
         self._show_back("lyrics", showing)
 
     def _on_eq_toggled(self, button):
+        """The equalizer button: flip the cover card (docked) or the view (compact) to the equalizer."""
         showing = button.get_active()
         button.set_tooltip_text("Hide Equalizer (Ctrl+E)" if showing else "Show Equalizer (Ctrl+E)")
         if self._compact:
@@ -228,6 +241,7 @@ class NowPlayingPanel(Gtk.Box):
             self.heading.set_text(HEADINGS[None])
 
     def _sync_eq_indicator(self):
+        """Tint the equalizer button when the song has its own EQ."""
         track = self.player.current
         custom = track is not None and not is_flat(self.player.eq_gains)
         (self.eq_button.add_css_class if custom else self.eq_button.remove_css_class)("eq-active")
@@ -235,6 +249,7 @@ class NowPlayingPanel(Gtk.Box):
     # ---- player view (docked panel) ----
 
     def _build_player_view(self):
+        """The docked player view; as the window gets shorter, the cover shrinks before the controls."""
         # When the window is short, the controls keep their room first, then the song's details,
         # then the wave; the cover takes what's left (and hides when that's too little).
         column = PriorityColumn(spacing=6, margin_start=16, margin_end=16, margin_bottom=4)
@@ -270,6 +285,7 @@ class NowPlayingPanel(Gtk.Box):
     # ---- compact view (the panel fills a small window) ----
 
     def _build_compact_view(self):
+        """The compact view: the song and its controls, flipping to the queue, lyrics or equalizer."""
         # Front: the song and its controls at the bottom, over the artist backdrop.
         front = PriorityColumn(spacing=6, margin_start=16, margin_end=16, margin_bottom=8)
         front.add_css_class("compact-player")
@@ -295,6 +311,7 @@ class NowPlayingPanel(Gtk.Box):
     # ---- sync with player ----
 
     def _sync(self):
+        """A new song or queue change: update the cover and what the buttons can do."""
         track = self.player.current
         self.cover.set_track(track)
         self.lyrics_button.set_sensitive(track is not None)

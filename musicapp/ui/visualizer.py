@@ -45,11 +45,15 @@ BLUE_EDGE = (0.56, 0.83, 1.0)  # #8fd3ff
 
 
 def _bin_edges():
+    """Frequency ranges of the BINS bins, spaced evenly on a log scale from F_LOW to F_HIGH."""
     ratio = (F_HIGH / F_LOW) ** (1 / BINS)
     return [(F_LOW * ratio ** i, F_LOW * ratio ** (i + 1)) for i in range(BINS)]
 
 
 class WaveVisualizer(Gtk.DrawingArea):
+    """The audio wave (see the module docstring). Only visible ones ask the player for the spectrum;
+    levels ease toward each new result on the frame clock."""
+
     def __init__(self, player, height: int = 96, min_height: int | None = None):
         """height: the natural height; min_height: how far it may shrink when space is short."""
         super().__init__(hexpand=True)
@@ -83,6 +87,7 @@ class WaveVisualizer(Gtk.DrawingArea):
     # ---- data ----
 
     def _on_spectrum(self, _player, magnitudes):
+        """A new spectrum result: map the bands onto BINS log-spaced bins (0..1) as targets."""
         if not self.get_mapped():
             return
         span = len(magnitudes)
@@ -103,14 +108,17 @@ class WaveVisualizer(Gtk.DrawingArea):
         self._animate()
 
     def _fall(self):
+        """Paused or a new song: let the wave settle to its resting lines."""
         self._targets = [0.0] * BINS
         self._animate()
 
     def _animate(self):
+        """Make sure the frame-clock animation is running."""
         if not self._tick_id:
             self._tick_id = self.add_tick_callback(self._on_tick)
 
     def _on_tick(self, _widget, _clock):
+        """Per frame: move levels toward their targets (fast up, slow down); stop when settled at rest."""
         self._peak = max(max(self._levels), self._peak * GAIN_RELEASE, GAIN_FLOOR)
         moving = False
         for i, target in enumerate(self._targets):
@@ -161,6 +169,7 @@ class WaveVisualizer(Gtk.DrawingArea):
         return top, bottom, mix(top, (1, 1, 1), 0.45), mix(bottom, (1, 1, 1), 0.45)
 
     def _draw(self, _area, cr, width, height):
+        """Draw the ribbon of fine lines between the two edges, then the edges themselves."""
         mid = height / 2
         cr.set_line_cap(cairo.LineCap.ROUND)
         # The curves are smooth, so bevel joins and a coarser flattening tolerance look the same

@@ -5,6 +5,7 @@ import sys
 
 
 def run() -> int:
+    """Start the app and return its exit status."""
     # Imported lazily: the scanner's worker processes re-import this module,
     # and they shouldn't pay for loading GTK.
     from musicapp.application import main

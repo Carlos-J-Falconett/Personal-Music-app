@@ -17,6 +17,7 @@ PLAYLIST_ICON = "musicapp-playlist-symbolic"
 
 
 def icon_button(icon: str, tooltip: str, *, flat=True, circular=False, action=None) -> Gtk.Button:
+    """A button showing an icon (flat by default), optionally circular or bound to an action."""
     btn = Gtk.Button(icon_name=icon, tooltip_text=tooltip, valign=Gtk.Align.CENTER)
     if flat:
         btn.add_css_class("flat")
@@ -118,12 +119,14 @@ class PriorityColumn(Gtk.Widget):
         self._children: list[tuple[Gtk.Widget, int]] = []
 
     def add(self, child: Gtk.Widget, priority: int, fill: bool = False):
+        """Add a child with its priority (0 is filled first); `fill` takes any height left over."""
         child.set_parent(self)
         self._children.append((child, priority))
         if fill:
             self.fill = child
 
     def _shown(self):
+        """The visible children, with their priorities."""
         return [(c, p) for c, p in self._children if c.should_layout()]
 
     def do_measure(self, orientation, for_size):
@@ -169,6 +172,7 @@ def follow_compact(win, widget, apply):
     ref = weakref.ref(widget)
 
     def on_change(_win, level):
+        """Apply the new level if the widget still exists."""
         target = ref()
         if target is not None:
             apply(target, level)
@@ -178,6 +182,7 @@ def follow_compact(win, widget, apply):
 
 
 def ordering(a, b) -> Gtk.Ordering:
+    """Compare two values for a Gtk sorter."""
     if a < b:
         return Gtk.Ordering.SMALLER
     if a > b:
@@ -186,6 +191,7 @@ def ordering(a, b) -> Gtk.Ordering:
 
 
 def update_heart(button: Gtk.Button, favorite: bool):
+    """Show a favorite heart as filled or empty."""
     button.set_icon_name(HEART_ON if favorite else HEART_OFF)
     button.set_tooltip_text("Remove from Favorites" if favorite else "Add to Favorites")
     if favorite:
@@ -218,10 +224,12 @@ class CoverArt(Gtk.Overlay):
         self.add_overlay(self.picture)
 
     def set_size(self, size: int):
+        """Change the displayed size."""
         self.set_size_request(size, size)
         self.placeholder.set_pixel_size(max(16, size // 3))
 
     def set_track(self, item):
+        """Show a track's album cover (the placeholder until it's loaded, or if there's none)."""
         self._token = item
         if item is None:
             self.picture.set_paintable(None)
@@ -230,6 +238,7 @@ class CoverArt(Gtk.Overlay):
         self.art.request_track(item, self.art_size, lambda tex, tok=item: self._apply(tok, tex))
 
     def _apply(self, token, texture):
+        """A cover arrived: show it, unless another track was asked for meanwhile."""
         if token is not self._token:
             return
         self.picture.set_paintable(texture)
@@ -251,6 +260,7 @@ class CurrentHeart(Gtk.Button):
         self._follow(player.current)
 
     def _follow(self, track):
+        """Follow a new track's favorite flag (hidden when there's no track)."""
         if self._item is not None:
             self._item.disconnect(self._handler)
         self._item = track
@@ -297,6 +307,7 @@ class CurrentPlaylists(Gtk.MenuButton):
         self._sync()
 
     def _sync(self):
+        """Show whether (and in how many playlists) the playing song is; hidden with no song."""
         track = self.player.current
         self.set_visible(track is not None)
         if track is None:

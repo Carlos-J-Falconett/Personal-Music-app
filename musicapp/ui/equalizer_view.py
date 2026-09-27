@@ -21,10 +21,14 @@ PRESETS = {
 
 
 def is_flat(gains) -> bool:
+    """Whether gains are all (nearly) zero."""
     return all(abs(g) < 0.05 for g in gains)
 
 
 class EqualizerView(Gtk.Overlay):
+    """A 10-band equalizer for the playing song, over its blurred cover. Several exist (panel, compact
+    view, focus view); all follow the player, and changes from any of them are saved for that song."""
+
     def __init__(self, win, size: int | None = None):
         """size: a fixed square size; None lets the container decide."""
         super().__init__()
@@ -113,6 +117,7 @@ class EqualizerView(Gtk.Overlay):
     # ---- following the player ----
 
     def _on_track(self, track):
+        """A new song: save any pending change for the old one, then show the new one's EQ."""
         self._flush_save()  # a pending change belongs to the previous song
         self._track = track
         if track is None:
@@ -122,10 +127,12 @@ class EqualizerView(Gtk.Overlay):
         self._sync_from_player()
 
     def _set_background(self, track, texture):
+        """Show the song's cover behind the sliders, unless the song changed meanwhile."""
         if track is self._track:
             self.background.set_paintable(texture)
 
     def _sync_from_player(self):
+        """Move the sliders and labels to the player's current gains."""
         gains = self.player.eq_gains
         self._syncing = True
         try:
@@ -144,20 +151,24 @@ class EqualizerView(Gtk.Overlay):
     # ---- user changes ----
 
     def _on_scale_changed(self, _scale):
+        """A slider moved: apply all the sliders' gains."""
         if self._syncing or self._track is None:
             return
         self._set_gains([s.get_value() for s in self.scales])
 
     def _apply_preset(self, name):
+        """Apply a named preset."""
         if self._track is None or name not in PRESETS:
             return
         self._set_gains(PRESETS[name])
 
     def reset_eq(self):
+        """Back to flat (the song's EQ is then forgotten)."""
         if self._track is not None:
             self._set_gains(FLAT)
 
     def _set_gains(self, gains):
+        """Apply gains now and save them for the song shortly (changes in a row are saved once)."""
         self.player.set_eq(gains)  # heard immediately; eq-changed updates the sliders
         self._pending = (self._track, self.player.eq_gains)
         if self._save_source:
@@ -165,11 +176,13 @@ class EqualizerView(Gtk.Overlay):
         self._save_source = GLib.timeout_add(SAVE_DELAY_MS, self._on_save_timeout)
 
     def _on_save_timeout(self):
+        """Save the pending change."""
         self._save_source = 0
         self._flush_save()
         return False
 
     def _flush_save(self):
+        """Save the pending change now: flat gains delete the song's EQ, others are stored."""
         if self._save_source:
             GLib.source_remove(self._save_source)
             self._save_source = 0
@@ -183,6 +196,7 @@ class EqualizerView(Gtk.Overlay):
 
 
 def _format_db(g: float) -> str:
+    """A gain for the label: "0", "+3", "-1.5"."""
     if abs(g) < 0.05:
         return "0"
     return f"{g:+.1f}".rstrip("0").rstrip(".")

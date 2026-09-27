@@ -1,5 +1,7 @@
 """Main window: top bar with tabs and search, content, right Now Playing panel, player bar."""
 
+import time
+
 import gi
 
 gi.require_version("Graphene", "1.0")
@@ -32,9 +34,25 @@ PANEL_DEFAULT_WIDTH = 485
 CONTENT_MIN_WIDTH = 440  # the library side never gets narrower than this while resizing
 PANEL_CHROME = 38  # the resize handle and the cards' outer margins
 PHONE_WIDTH = "max-width: 560sp"
+DOUBLE_PRESS_S = 0.5  # Black Hole slideshow: the second arrow press must follow within this
+# Black Hole slideshow shortcuts with Shift, matched here by key and Shift: as plain accelerators,
+# GTK could take Ctrl+Shift+R for Ctrl+R (Shift is "used up" by the capital letter), and so on.
+SHIFT_SHORTCUTS = {
+    Gdk.KEY_R: "win.slideshow-repeat", Gdk.KEY_r: "win.slideshow-repeat",
+    Gdk.KEY_G: "app.slideshow-global", Gdk.KEY_g: "app.slideshow-global",
+    Gdk.KEY_braceright: "app.slideshow-next-group", Gdk.KEY_bracketright: "app.slideshow-next-group",
+    Gdk.KEY_braceleft: "app.slideshow-previous-group", Gdk.KEY_bracketleft: "app.slideshow-previous-group",
+}
+ARROWS = {Gdk.KEY_Right: 1, Gdk.KEY_KP_Right: 1, Gdk.KEY_Left: -1, Gdk.KEY_KP_Left: -1}
 
 
 class MainWindow(Adw.ApplicationWindow):
+    """The main window. Layers, back to front: the artist backdrop (or Black Hole slideshow), then the
+    header bar with the tabs and search, the library pages, and the Now Playing panel on the right
+    (a full-window overlay on small windows); or, instead of all that, the full-window focus view.
+    It adapts to three sizes (compact levels 0-2, see the breakpoints in _build), owns the window
+    actions (playlists, panels, focus view, Black Hole's hide-interface and repeat-slide) and the
+    window-wide keys (space, Escape, Black Hole slideshow keys)."""
     __gsignals__ = {
         # 0 = wide, 1 = narrow (tabs at bottom), 2 = phone-sized
         "compact-changed": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
@@ -48,6 +66,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.art = app.art
         self.compact_level = 0
         self._syncing_icons = False
+        self._last_arrow = (0, 0.0)  # (direction, when) of the last slideshow arrow press
 
         db = self.library.db
         self.set_default_size(db.get_setting("window-width", 1280), db.get_setting("window-height", 800))
@@ -72,6 +91,7 @@ class MainWindow(Adw.ApplicationWindow):
     # ---- layout ----
 
     def _build(self):
+        """Create every part of the window and the adaptive breakpoints."""
         # Tab pages
         self.songs_page = SongList(self, title="All Songs", empty_icon="folder-music-symbolic",
                                    empty_title="No Music Found",
@@ -242,6 +262,9 @@ class MainWindow(Adw.ApplicationWindow):
             page.add_section("Black Hole")
             page.add_switch("media-playlist-repeat-symbolic", "Slideshow", self.art.slideshow_enabled,
                             lambda on: self.app.change_action_state("slideshow", GLib.Variant("b", on)))
+            page.add_submenu("view-grid-symbolic", "Choose Slideshow", self._fill_slideshow_menu)
+            page.add_switch("media-playlist-repeat-song-symbolic", "Repeat Current Slide", self.backdrop.repeating,
+                            self.set_slide_repeat, accel="<Control><Shift>r")
             page.add_switch("view-conceal-symbolic", "Hide Interface", self.ui_hidden,
                             self.set_ui_hidden, accel="<Control>h")
             page.add_item("weather-clear-symbolic", "Exit Black Hole Mode", lambda: self.app.set_black_hole(False))
@@ -253,7 +276,32 @@ class MainWindow(Adw.ApplicationWindow):
         page.add_item("application-exit-symbolic", "Quit", lambda: act("app.quit", None), accel="<Control>q",
                       destructive=True)
 
+    def _fill_slideshow_menu(self, page):
+        """Black Hole mode: Global, and each group with its slideshows; the showing one is marked."""
+        ss = self.art.slideshows
+        switch = self.app._switch_slideshow
+
+        def item(rows, icon, label, target, select):
+            """A menu row that shows this target, marked when it's the one showing."""
+            rows.add_item(icon, label, lambda: switch(lambda: select() or True),
+                          detail="Showing" if ss.is_showing(target) else None)
+
+        rows = page.add_scrolling(360)
+        item(rows, "view-grid-symbolic", "Global (Everything)", None, ss.select_global)
+        for group in ss.groups:
+            rows.add_section(group.name)
+            item(rows, "view-grid-symbolic", "Whole Group", group, lambda g=group: ss.select_group(g))
+            for slideshow in group.slideshows:
+                item(rows, "image-x-generic-symbolic", slideshow.name, slideshow,
+                     lambda s=slideshow: ss.select_slideshow(s))
+        if not ss.groups:
+            rows.add_note("image-x-generic-symbolic", "No slideshows yet")
+        page.add_section()
+        page.add_item("document-edit-symbolic", "Manage Slideshows…", self.show_slideshows)
+
     def _on_menu_button_pressed(self, gesture, n_press, _x, _y):
+        """Black Hole mode: a double-click on the menu icon leaves the mode; a single click opens the
+        menu once it's clear no second click is coming."""
         if not self.art.turned or self.app_menu.get_visible():
             return  # the usual menu button (a click with the menu open closes it)
         gesture.set_state(Gtk.EventSequenceState.CLAIMED)
@@ -272,6 +320,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._menu_open_source = GLib.timeout_add(delay, open_menu)
 
     def _on_breakpoint(self, *_):
+        """The window crossed a size breakpoint: move the search field, restyle, tell listeners."""
         level = self._compact_levels.get(self.get_current_breakpoint(), 0)
         if level == 0:
             # Leaving narrow mode: Adw restores the width the panel had when it was built,
@@ -285,6 +334,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.emit("compact-changed", level)
 
     def _narrow_condition(self) -> str:
+        """The breakpoint below which the library no longer fits beside the Now Playing panel."""
         return f"max-width: {self._panel_width + CONTENT_MIN_WIDTH + PANEL_CHROME}px"
 
     def _place_search(self, phone: bool):
@@ -312,6 +362,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.search_button.set_visible(phone)
 
     def _set_search_capture(self, on: bool):
+        """Whether typing anywhere in the window starts a search."""
         target = self if on else None
         if self.search_bar.get_child() is not None:
             self.search_bar.set_key_capture_widget(target)
@@ -321,6 +372,7 @@ class MainWindow(Adw.ApplicationWindow):
     # ---- top bar icons (small windows) ----
 
     def _on_tab_icon(self, button, name):
+        """Small windows: a top-bar icon was picked (a tab, or Now Playing)."""
         if self._syncing_icons or not button.get_active():
             return
         self.show_ui()
@@ -332,6 +384,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._hide_overlay_panel()
 
     def _sync_tab_icons(self):
+        """Keep the top-bar icons in step with what's showing."""
         showing_panel = self.split.get_collapsed() and self.split.get_show_sidebar()
         name = "now" if showing_panel else self.view_stack.get_visible_child_name()
         button = self._tab_buttons.get(name)
@@ -343,6 +396,7 @@ class MainWindow(Adw.ApplicationWindow):
     # ---- Now Playing panel ----
 
     def _on_handle_drag(self, gesture, _dx, _dy):
+        """Dragging the Now Playing panel's left edge resizes it."""
         # Use the pointer's window position (not the drag offset): the handle itself moves as
         # the panel resizes, so widget-relative offsets would feed back on themselves.
         ok, x, y = gesture.get_point(None)
@@ -353,6 +407,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.set_panel_width(self.get_content().get_width() - point.x)
 
     def set_panel_width(self, width: float):
+        """Set the Now Playing panel's width, keeping the library at least CONTENT_MIN_WIDTH wide."""
         limit = max(PANEL_MIN_WIDTH, self.get_width() - CONTENT_MIN_WIDTH - PANEL_CHROME)
         self._panel_width = int(min(max(width, PANEL_MIN_WIDTH), limit))
         self._apply_panel_width()
@@ -360,6 +415,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._narrow_breakpoint.set_condition(Adw.BreakpointCondition.parse(self._narrow_condition()))
 
     def _apply_panel_width(self):
+        """Apply the chosen panel width (docked panel only)."""
         if not self.split.get_collapsed():
             self.split.set_min_sidebar_width(self._panel_width)
             self.split.set_max_sidebar_width(self._panel_width)
@@ -370,6 +426,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.split.set_show_sidebar(False)
 
     def _on_collapsed_changed(self, split, _pspec):
+        """Switching between the docked panel and the window-filling one."""
         collapsed = split.get_collapsed()
         split.set_show_sidebar(True)  # docked: always shown; narrow: start on the player
         self.panel.set_collapsed(collapsed)
@@ -384,12 +441,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.content.set_can_target(not covered)
 
     def _hide_overlay_panel(self):
+        """Small windows: dismiss the full-window Now Playing panel."""
         if self.split.get_collapsed():
             self.split.set_show_sidebar(False)
 
     # ---- actions ----
 
     def _install_actions(self):
+        """Register the window actions (win.*). Their accelerators are set in MusicApp._install_actions."""
         def add(name, callback, param=None):
             action = Gio.SimpleAction.new(name, GLib.VariantType.new(param) if param else None)
             action.connect("activate", callback)
@@ -407,7 +466,9 @@ class MainWindow(Adw.ApplicationWindow):
         add("themes", lambda *_: ThemeDialog(self).present(self))
         add("focus-mode", lambda *_: self.set_focus_mode(not self.focus_mode))
         add("hide-ui", lambda *_: self.set_ui_hidden(not self.ui_hidden))
-        self.lookup_action("hide-ui").set_enabled(False)  # Black Hole mode only
+        add("slideshow-repeat", lambda *_: self.set_slide_repeat(not self.backdrop.repeating))
+        for name in ("hide-ui", "slideshow-repeat"):
+            self.lookup_action(name).set_enabled(False)  # Black Hole mode only
         # Focus view needs a song; it can always be left again.
         self.player.connect("track-changed", lambda *_: self._sync_focus_action())
 
@@ -415,9 +476,11 @@ class MainWindow(Adw.ApplicationWindow):
 
     @property
     def focus_mode(self) -> bool:
+        """Whether the full-window focus view is showing."""
         return self.pages.get_visible_child_name() == "focus"
 
     def set_focus_mode(self, on: bool):
+        """Show or leave the focus view (it needs a song to show)."""
         if on == self.focus_mode:
             return
         if on and self.player.current is None:
@@ -430,12 +493,14 @@ class MainWindow(Adw.ApplicationWindow):
         self._sync_focus_action()
 
     def _sync_focus_action(self):
+        """The focus view can be opened only when there's a song."""
         self.lookup_action("focus-mode").set_enabled(self.player.current is not None or self.focus_mode)
 
     # ---- hidden interface (Black Hole mode) ----
 
     @property
     def ui_hidden(self) -> bool:
+        """Whether the interface is hidden (Black Hole mode's Hide Interface)."""
         return self.ui_stack.get_visible_child_name() == "hidden"
 
     def set_ui_hidden(self, hidden: bool):
@@ -445,16 +510,27 @@ class MainWindow(Adw.ApplicationWindow):
             self.ui_stack.set_visible_child_name("hidden" if hidden else "ui")
 
     def show_ui(self):
+        """Bring a hidden interface back."""
         if self.ui_hidden:
             self.set_ui_hidden(False)
 
+    def set_slide_repeat(self, on: bool):
+        """Black Hole slideshow: keep showing the current slide, or carry on."""
+        if not self.art.turned or on == self.backdrop.repeating:
+            return
+        self.backdrop.set_repeat(on)
+        self.toast("Repeating this slide" if on else "Slideshow continues")
+
     def _sync_hide_ui(self):
+        """Black Hole mode switched: its window actions follow, and the interface comes back when it ends."""
         turned = self.art.turned
         self.lookup_action("hide-ui").set_enabled(turned)
+        self.lookup_action("slideshow-repeat").set_enabled(turned)
         if not turned:
             self.set_ui_hidden(False)
 
     def _toggle_queue(self):
+        """Show/hide the queue, in the focus view's popup or the Now Playing panel."""
         self.show_ui()
         if self.focus_mode:
             self.focus_view.toggle("queue")
@@ -463,6 +539,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.panel.toggle_queue()
 
     def _toggle_lyrics(self):
+        """Show/hide the lyrics, in the focus view's popup or on the Now Playing card."""
         self.show_ui()
         if self.focus_mode:
             self.focus_view.toggle("lyrics")
@@ -471,6 +548,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.panel.toggle_lyrics()
 
     def _toggle_eq(self):
+        """Show/hide the equalizer, in the focus view's popup or on the Now Playing card."""
         self.show_ui()
         if self.focus_mode:
             self.focus_view.toggle("eq")
@@ -479,22 +557,35 @@ class MainWindow(Adw.ApplicationWindow):
         self.panel.toggle_eq()
 
     def show_artist_images(self, artist: str | None = None):
+        """The Artist Images dialog, optionally open on one artist."""
         ArtistImageDialog(self, artist).present(self)
 
+    def show_slideshows(self):
+        """Black Hole mode: the Artist Images dialog, open on its slideshows."""
+        dialog = ArtistImageDialog(self)
+        dialog.show_slideshow()
+        dialog.present(self)
+
     def _on_artist_image_changed(self, name):
+        """An artist image changed (or Black Hole mode switched): refresh what shows artist images."""
         if name is None:  # Black Hole mode switched
             self._sync_hide_ui()
         self.artists_page.refresh()
         self.search_view.refresh()
 
     def _focus_search(self):
+        """Ctrl+F: focus the search field (opening its bar on phone-sized windows)."""
         if self.search_bar.get_child() is not None:
             self.search_bar.set_search_mode(True)
         self.search_entry.grab_focus()
         self.search_entry.select_region(0, -1)
 
     def _on_key_pressed(self, _ctrl, keyval, _code, state):
+        """Window-wide keys, before any widget sees them: Black Hole slideshow keys, space for
+        play/pause (unless typing), Escape to leave the focus view or clear the search."""
         mods = state & Gtk.accelerator_get_default_mod_mask()
+        if self.art.turned and self._slideshow_key(keyval, mods):
+            return True
         if keyval == Gdk.KEY_space and not mods:
             if isinstance(self.get_focus(), (Gtk.Text, Gtk.Editable)):
                 return False
@@ -510,9 +601,31 @@ class MainWindow(Adw.ApplicationWindow):
             return True
         return False
 
+    def _slideshow_key(self, keyval, mods) -> bool:
+        """Black Hole mode's slideshow keys. True if the key was used."""
+        shift_ctrl = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        if mods == shift_ctrl and keyval in SHIFT_SHORTCUTS:
+            self.activate_action(SHIFT_SHORTCUTS[keyval], None)
+            return True
+        if mods or keyval not in ARROWS or not self.backdrop.slideshow_playing:
+            return False
+        if isinstance(self.get_focus(), (Gtk.Text, Gtk.Editable)):
+            return False  # typing: the arrows move the cursor
+        # Pressed twice: next / previous slide. Once does nothing (the arrows belong to the
+        # slideshow in Black Hole mode).
+        step, now = ARROWS[keyval], time.monotonic()
+        last_step, last_time = self._last_arrow
+        if last_step == step and now - last_time <= DOUBLE_PRESS_S:
+            self._last_arrow = (0, 0.0)
+            self.backdrop.step_slide(step)
+        else:
+            self._last_arrow = (step, now)
+        return True
+
     # ---- search ----
 
     def _on_search_changed(self, entry):
+        """Typing in the search field shows the results in place of the tabs."""
         text = entry.get_text().strip()
         if text:
             self.show_ui()
@@ -525,6 +638,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.content.set_visible_child_name("tabs")
 
     def _clear_search(self):
+        """Empty the search field and go back to the tabs."""
         if self.search_entry.get_text():
             self.search_entry.set_text("")
         self.content.set_visible_child_name("tabs")
@@ -532,6 +646,7 @@ class MainWindow(Adw.ApplicationWindow):
     # ---- navigation ----
 
     def show_artist(self, name: str):
+        """Go to an artist's page."""
         self.show_ui()
         self._clear_search()
         self.view_stack.set_visible_child_name("artists")
@@ -539,6 +654,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._hide_overlay_panel()
 
     def show_album(self, key):
+        """Go to an album's page (key: (artist, album title))."""
         self.show_ui()
         album = self.library.find_album(key)
         if album is None:
@@ -549,6 +665,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._hide_overlay_panel()
 
     def show_playlist(self, pid: int):
+        """Go to a playlist's page."""
         self.show_ui()
         self._clear_search()
         self.view_stack.set_visible_child_name("playlists")
@@ -557,6 +674,7 @@ class MainWindow(Adw.ApplicationWindow):
     # ---- data sync ----
 
     def _connect_model(self):
+        """Keep the pages in step with library and player changes."""
         self.library.connect("changed", lambda *_: self.refresh_all())
         self.library.connect("favorites-changed", lambda *_: self._refresh_favorites())
         # Adding or removing songs also emits playlists-changed, so this covers contents too.
@@ -565,6 +683,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.art.artist_listeners.append(self._on_artist_image_changed)
 
     def refresh_all(self):
+        """Reload every page after the library changed, and drop deleted songs from the queue."""
         self.songs_page.set_items(self.library.sorted_items)
         self.artists_page.refresh()
         self._refresh_favorites()
@@ -573,11 +692,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.player.remove_tracks(lambda t: t.id not in self.library.items)
 
     def _refresh_favorites(self):
+        """Reload the Favorites page."""
         self.favorites_page.set_items(self.library.favorite_items())
 
     # ---- playlist operations ----
 
     def new_playlist_with(self, items):
+        """Ask for a name and create a playlist, with `items` in it (or empty, then open it)."""
         def create(name):
             pid = self.library.create_playlist(name)
             if items:
@@ -595,6 +716,7 @@ class MainWindow(Adw.ApplicationWindow):
         ask_playlist_name(self, heading="New Playlist", confirm="Create", body=body, on_done=create)
 
     def rename_playlist(self, pid):
+        """Ask for a playlist's new name."""
         name = self.library.playlist_name(pid)
         if name is None:
             return
@@ -603,6 +725,7 @@ class MainWindow(Adw.ApplicationWindow):
                           on_done=lambda new: self.library.rename_playlist(pid, new))
 
     def delete_playlist(self, pid):
+        """Confirm, then delete a playlist."""
         name = self.library.playlist_name(pid)
         if name is None:
             return
@@ -614,6 +737,7 @@ class MainWindow(Adw.ApplicationWindow):
         confirm_delete_playlist(self, name, do_delete)
 
     def _play_playlist(self, pid):
+        """Play a playlist from the start."""
         items = self.library.playlist_items(pid)
         if items:
             self.player.play_tracks(items, 0)
@@ -621,9 +745,11 @@ class MainWindow(Adw.ApplicationWindow):
     # ---- misc ----
 
     def toast(self, message: str):
+        """Show a short message at the bottom of the window."""
         self.toasts.add_toast(Adw.Toast(title=GLib.markup_escape_text(message), timeout=3))
 
     def set_scan_status(self, text):
+        """Show the library scan's progress in the banner (None hides it)."""
         if text:
             self.banner.set_title(text)
         self.banner.set_revealed(bool(text))
@@ -636,6 +762,7 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     def save_window_state(self):
+        """Remember the window size, the tab and the panel width for the next launch."""
         db = self.library.db
         if not self.is_maximized():
             width, height = self.get_default_size()

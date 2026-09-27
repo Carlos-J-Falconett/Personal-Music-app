@@ -12,6 +12,8 @@ _PLAY_FLAG_AUDIO = 1 << 1  # GstPlayFlags.AUDIO
 
 
 class SilentVideo(GObject.Object):
+    """A video with no sound (see the module docstring). `paintable` is what to show; the prepared,
+    ended and error properties notify like Gtk.MediaFile's."""
     __gtype_name__ = "SilentVideo"
 
     prepared = GObject.Property(type=bool, default=False)
@@ -52,9 +54,11 @@ class SilentVideo(GObject.Object):
         return self.error or None  # a str property reads as "" when unset
 
     def set_loop(self, loop: bool):
+        """Whether the video starts over at its end (instead of ending)."""
         self._loop = loop
 
     def play(self):
+        """Play (from the start if it had ended)."""
         if self._pipeline is None:
             return
         if self.ended:  # like Gtk.MediaFile: playing again after the end starts over
@@ -64,6 +68,7 @@ class SilentVideo(GObject.Object):
         self._pipeline.set_state(Gst.State.PLAYING)
 
     def pause(self):
+        """Pause."""
         self._playing = False
         if self._pipeline is not None:
             self._pipeline.set_state(Gst.State.PAUSED)
@@ -78,10 +83,12 @@ class SilentVideo(GObject.Object):
     # ---- bus ----
 
     def _on_async_done(self, *_):
+        """The first frame is ready."""
         if not self.prepared:
             self.prepared = True
 
     def _on_eos(self, *_):
+        """The end: start over (looping) or report it ended."""
         if self._loop:
             self._pipeline.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
         else:
@@ -89,6 +96,7 @@ class SilentVideo(GObject.Object):
             self.ended = True
 
     def _on_error(self, _bus, msg):
+        """The video can't be played: release it and report the error."""
         err, _debug = msg.parse_error()
         print(f"[video] {err.message}")
         self.stop()

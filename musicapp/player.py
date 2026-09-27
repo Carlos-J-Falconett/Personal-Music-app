@@ -26,6 +26,7 @@ FLAT = [0.0] * len(EQ_BANDS)
 
 
 class Repeat(IntEnum):
+    """Repeat mode: off, the whole queue, or the current song."""
     OFF = 0
     ALL = 1
     ONE = 2
@@ -105,6 +106,7 @@ class Player(GObject.Object):
 
     @property
     def current(self):
+        """The playing (or paused, or next-to-load) track, or None."""
         if 0 <= self._pos < len(self._order):
             return self._tracks[self._order[self._pos]]
         return None
@@ -140,6 +142,7 @@ class Player(GObject.Object):
 
     @property
     def queue_position(self) -> int:
+        """Index of the current track in play order."""
         return self._pos
 
     def upcoming(self) -> list[tuple[int, object, bool]]:
@@ -153,6 +156,7 @@ class Player(GObject.Object):
         return result
 
     def has_next(self) -> bool:
+        """Whether Next would go somewhere (Repeat Queue wraps around)."""
         return self._pos + 1 < len(self._order) or (self._repeat == Repeat.ALL and bool(self._order))
 
     def has_previous(self) -> bool:
@@ -174,6 +178,7 @@ class Player(GObject.Object):
         self._load_current(play=True)
 
     def shuffle_play(self, tracks: list):
+        """Turn shuffle on and play `tracks` from a random one."""
         if not tracks:
             return
         if not self._shuffle:
@@ -203,6 +208,7 @@ class Player(GObject.Object):
         self.play_next(tracks)
 
     def remove_from_queue(self, queue_index: int):
+        """Remove an upcoming (or earlier) track from the queue; the current one can't be removed."""
         if not (0 <= queue_index < len(self._order)) or queue_index == self._pos:
             return
         orig = self._order.pop(queue_index)
@@ -213,6 +219,7 @@ class Player(GObject.Object):
         self.emit("queue-changed")
 
     def move_in_queue(self, src: int, dest: int):
+        """Move a track from play position `src` to `dest` (dragging in Up Next)."""
         n = len(self._order)
         if not (0 <= src < n and 0 <= dest < n) or src == dest:
             return
@@ -234,6 +241,7 @@ class Player(GObject.Object):
         self.emit("queue-changed")
 
     def jump_to(self, queue_index: int):
+        """Play the track at this play position."""
         if 0 <= queue_index < len(self._order):
             self._pos = queue_index
             self._load_current(play=True)
@@ -248,6 +256,7 @@ class Player(GObject.Object):
         self.emit("queue-changed")
 
     def clear_queue(self):
+        """Stop and empty the queue."""
         self.stop()
         self._tracks, self._order, self._pos = [], [], -1
         self.emit("queue-changed")
@@ -283,6 +292,7 @@ class Player(GObject.Object):
     # ---- modes --------------------------------------------------------------------
 
     def set_shuffle(self, value: bool):
+        """Shuffle on keeps the current track and shuffles the rest; off restores the original order."""
         if value == self._shuffle:
             return
         self._shuffle = value
@@ -300,13 +310,16 @@ class Player(GObject.Object):
         self.set_shuffle(not self._shuffle)
 
     def set_repeat(self, mode: Repeat):
+        """Set the repeat mode."""
         self._repeat = Repeat(mode)
         self.emit("modes-changed")
 
     def cycle_repeat(self):
+        """Off → Queue → Current Song → Off."""
         self.set_repeat({Repeat.OFF: Repeat.ALL, Repeat.ALL: Repeat.ONE, Repeat.ONE: Repeat.OFF}[self._repeat])
 
     def set_volume(self, value: float):
+        """Set the volume, 0..1 (applied on a cubic curve so the slider feels even)."""
         value = max(0.0, min(1.0, value))
         self._volume = value
         # Cubic curve so the slider feels linear to the ear.
@@ -343,6 +356,7 @@ class Player(GObject.Object):
     # ---- transport ------------------------------------------------------------------
 
     def play(self):
+        """Play or resume; with nothing queued, play the whole library."""
         if self.current is None:
             # Nothing queued (e.g. first launch, or Play from GNOME's media controls): play everything.
             tracks = self.default_tracks() if self.default_tracks else []
@@ -364,12 +378,15 @@ class Player(GObject.Object):
         self.pause() if self._playing else self.play()
 
     def stop(self):
+        """Stop playback and unload the track (the queue stays)."""
         self._playbin.set_state(Gst.State.NULL)
         self._loaded = False
         self._set_playing(False)
         self.emit("position-changed", 0.0, self._duration)
 
     def next(self, auto: bool = False):
+        """Go to the next track. auto=True is the end of a song: at the end of the queue (no repeat) it
+        stops and rewinds to the first track."""
         if not self._order:
             return
         if self._pos + 1 < len(self._order):
@@ -389,6 +406,9 @@ class Player(GObject.Object):
         self.emit("queue-changed")
 
     def previous(self):
+        """Restart the song if it's past PREVIOUS_RESTART_THRESHOLD seconds or is the first in
+        the queue (without Repeat Queue); otherwise go back one.
+"""
         if not self._order:
             return
         if self.get_position() > PREVIOUS_RESTART_THRESHOLD or (self._pos == 0 and self._repeat != Repeat.ALL):
@@ -399,6 +419,7 @@ class Player(GObject.Object):
         self.emit("queue-changed")
 
     def seek(self, seconds: float):
+        """Jump to a position in seconds (applied once the pipeline is ready, if it isn't yet)."""
         if self.current is None:
             return
         seconds = max(0.0, seconds)
@@ -415,12 +436,14 @@ class Player(GObject.Object):
         self.emit("seeked", seconds)
 
     def get_position(self) -> float:
+        """The playback position in seconds."""
         if not self._loaded:
             return self._pending_seek or 0.0
         ok, pos = self._playbin.query_position(Gst.Format.TIME)
         return pos / Gst.SECOND if ok else 0.0
 
     def get_duration(self) -> float:
+        """The song's length in seconds (from GStreamer once known, else from its tags)."""
         if self._loaded:
             ok, dur = self._playbin.query_duration(Gst.Format.TIME)
             if ok and dur > 0:
@@ -430,6 +453,7 @@ class Player(GObject.Object):
     # ---- internals ---------------------------------------------------------------------
 
     def _load_current(self, play: bool, seek_to: float | None = None):
+        """Load the current track into the pipeline, with its own equalizer, and play or pause it."""
         track = self.current
         if track is None:
             return
@@ -447,6 +471,7 @@ class Player(GObject.Object):
         self.emit("position-changed", seek_to or 0.0, self._duration)
 
     def _set_playing(self, playing: bool):
+        """Record playing/paused, emit state-changed, and start delivering the spectrum if needed."""
         if playing != self._playing:
             self._playing = playing
             self.emit("state-changed", playing)
@@ -467,12 +492,14 @@ class Player(GObject.Object):
         self._set_playing(self._playing)  # starts the delivery poll if it's now needed
 
     def _running_time(self) -> int | None:
+        """The pipeline's running time now (ns), which the spectrum results are timed against."""
         clock = self._playbin.get_clock()
         if clock is None:
             return None
         return clock.get_time() - self._playbin.get_base_time()
 
     def _on_element(self, _bus, msg):
+        """A spectrum result: queue it until the audio it describes is being heard."""
         structure = msg.get_structure()
         if structure is None or structure.get_name() != "spectrum":
             return
@@ -486,6 +513,7 @@ class Player(GObject.Object):
         self._spectrum_queue.append((running + (duration if ok_dur else 0), magnitudes))
 
     def _release_spectrum(self):
+        """Every SPECTRUM_POLL_MS: emit the latest spectrum result that is now due."""
         if not self._playing or not self._spectrum_users:
             self._spectrum_poll = 0
             return False
@@ -498,6 +526,7 @@ class Player(GObject.Object):
         return True
 
     def _tick(self):
+        """Every 250 ms: report the position while playing."""
         if self._loaded and self._playing and self._pending_seek is None:
             pos, dur = self.get_position(), self.get_duration()
             if (round(pos, 1), dur) != self._last_reported:
@@ -506,6 +535,7 @@ class Player(GObject.Object):
         return True
 
     def _on_async_done(self, _bus, _msg):
+        """The pipeline is ready: apply a pending seek, and make sure the stream isn't left muted."""
         self._error_streak = 0
         # The sound server remembers mute per app and may restore it onto a new stream (e.g.
         # left muted by another stream of this app): the music itself is never muted.
@@ -519,6 +549,7 @@ class Player(GObject.Object):
             self.emit("position-changed", target, self.get_duration())
 
     def _on_eos(self, _bus, _msg):
+        """End of a song: repeat it (Repeat Current Song) or go to the next one."""
         if self._repeat == Repeat.ONE:
             self._spectrum_queue.clear()
             self._playbin.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
@@ -527,6 +558,7 @@ class Player(GObject.Object):
         self.next(auto=True)
 
     def _on_error(self, _bus, msg):
+        """A song can't be played: say so and skip it (unless every song in the queue fails)."""
         err, debug = msg.parse_error()
         track = self.current
         name = track.title if track else "track"
@@ -542,4 +574,5 @@ class Player(GObject.Object):
             self._set_playing(False)
 
     def shutdown(self):
+        """Release the audio pipeline."""
         self._playbin.set_state(Gst.State.NULL)

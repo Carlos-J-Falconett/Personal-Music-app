@@ -175,11 +175,13 @@ def normalize_hex(text: str) -> str | None:
 
 
 def to_rgb(hex_color: str) -> tuple[float, float, float]:
+    """A hex colour as (r, g, b) floats 0..1 (black if invalid)."""
     v = normalize_hex(hex_color) or "#000000"
     return tuple(int(v[i:i + 2], 16) / 255 for i in (1, 3, 5))
 
 
 def to_hex(rgb) -> str:
+    """(r, g, b) floats 0..1 as "#rrggbb"."""
     return "#" + "".join(f"{round(max(0.0, min(1.0, c)) * 255):02x}" for c in rgb)
 
 
@@ -189,6 +191,7 @@ def mix(a, b, t: float):
 
 
 def css_var(key: str) -> str:
+    """The stylesheet variable of a detailed colour: "song_title" → "--song-title-color"."""
     return f"--{key.replace('_', '-')}-color"
 
 
@@ -212,12 +215,14 @@ def effective(colors: dict, key: str) -> str:
 
 
 def _system_accent() -> str:
+    """The desktop's accent colour, as hex."""
     rgba = Adw.StyleManager.get_default().get_accent_color_rgba()
     return to_hex((rgba.red, rgba.green, rgba.blue))
 
 
 @dataclass
 class Theme:
+    """A named set of colours: every REQUIRED key, plus any DETAILED ones that are set."""
     name: str
     colors: dict = field(default_factory=dict)
 
@@ -227,6 +232,7 @@ class Theme:
 
 
 def default_theme() -> Theme:
+    """The built-in Default theme (its accent is the system accent colour)."""
     return Theme(DEFAULT_NAME, {"accent": _system_accent(), **_DEFAULT_FIXED})
 
 
@@ -258,6 +264,9 @@ def theme_css(colors: dict) -> str:
 
 
 class ThemeManager:
+    """Stores custom themes (in settings), applies the active one through a CSS provider, and previews
+    colours live while a theme is edited. Listeners are called after the look changes."""
+
     def __init__(self, db):
         self.db = db
         self.listeners: list = []  # called with no arguments after the look changes
@@ -276,6 +285,7 @@ class ThemeManager:
     # ---- themes ----
 
     def _load(self) -> dict[str, Theme]:
+        """The saved custom themes, skipping any with invalid colours."""
         themes = {}
         for entry in self.db.get_setting("themes", []) or []:
             try:
@@ -294,15 +304,19 @@ class ThemeManager:
         return themes
 
     def _store(self):
+        """Save the custom themes."""
         self.db.set_setting("themes", [{"name": t.name, "colors": t.colors} for t in self._custom.values()])
 
     def themes(self) -> list[Theme]:
+        """Default first, then the custom themes by name."""
         return [default_theme(), *sorted(self._custom.values(), key=lambda t: t.name.casefold())]
 
     def get(self, name: str) -> Theme:
+        """A theme by name (Default if there's no such custom theme)."""
         return self._custom.get(name) or default_theme()
 
     def name_taken(self, name: str, except_name: str | None = None) -> bool:
+        """Whether a theme name (ignoring case) is in use, apart from `except_name`."""
         folded = name.strip().casefold()
         return any(t.name.casefold() == folded for t in self.themes() if t.name != except_name)
 
@@ -315,6 +329,7 @@ class ThemeManager:
         self.select(theme.name)
 
     def delete(self, name: str):
+        """Delete a custom theme; if it was active, Default takes over."""
         if self._custom.pop(name, None) is not None:
             self._store()
             if self.active == name:
@@ -323,6 +338,7 @@ class ThemeManager:
                 self._notify()
 
     def select(self, name: str):
+        """Make a theme the active one, remember it, and apply it (ending any preview)."""
         self.active = name if name in self._custom else DEFAULT_NAME
         self.db.set_setting("theme", self.active)
         self._previewing = False
@@ -332,11 +348,13 @@ class ThemeManager:
     # ---- live preview while editing ----
 
     def preview(self, colors: dict):
+        """Show `colors` on the whole app without saving (while editing a theme)."""
         self._previewing = True
         self._current = dict(colors)
         self._apply(self._current)
 
     def end_preview(self):
+        """Go back to the active theme after editing without saving."""
         if self._previewing:
             self.select(self.active)
 
@@ -353,6 +371,7 @@ class ThemeManager:
         return {k: to_rgb(self._current.get(k, base[k])) for k in REQUIRED}
 
     def _apply(self, colors: dict):
+        """Load the CSS for `colors` (nothing for the Default look) and notify listeners."""
         if not self._previewing and self.active == DEFAULT_NAME:
             css = ""  # the stylesheet's own look
         else:
@@ -362,5 +381,6 @@ class ThemeManager:
         self._notify()
 
     def _notify(self):
+        """Call the listeners."""
         for listener in list(self.listeners):
             listener()

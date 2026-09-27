@@ -64,6 +64,9 @@ MPRIS_TO_LOOP = {v: k for k, v in LOOP_TO_MPRIS.items()}
 
 
 class MprisService:
+    """Publishes the player on D-Bus as org.mpris.MediaPlayer2 (GNOME's media controls, lock screen,
+    media keys, headphone buttons) and forwards their commands to the Player."""
+
     def __init__(self, app, player, art):
         self.app = app
         self.player = player
@@ -81,6 +84,7 @@ class MprisService:
         player.connect("seeked", self._on_seeked)
 
     def _on_bus_acquired(self, conn, _name):
+        """Register both MPRIS interfaces once the bus name is ours."""
         self._conn = conn
         node = Gio.DBusNodeInfo.new_for_xml(INTROSPECTION)
         for iface in node.interfaces:
@@ -89,6 +93,7 @@ class MprisService:
     # ---- incoming calls ----
 
     def _method_call(self, _conn, _sender, _path, _iface, method, params, invocation):
+        """Handle an incoming MPRIS method call."""
         p = self.player
         if method == "Raise":
             if self.app.props.active_window:
@@ -122,10 +127,12 @@ class MprisService:
         invocation.return_value(None)
 
     def _get_property(self, _conn, _sender, _path, iface, prop):
+        """Answer a property read."""
         value = self._properties(iface).get(prop)
         return value
 
     def _set_property(self, _conn, _sender, _path, _iface, prop, value):
+        """Handle a property write (repeat, shuffle, volume)."""
         v = value.unpack()
         if prop == "LoopStatus" and v in MPRIS_TO_LOOP:
             self.player.set_repeat(MPRIS_TO_LOOP[v])
@@ -138,6 +145,7 @@ class MprisService:
     # ---- property values ----
 
     def _properties(self, iface) -> dict[str, GLib.Variant]:
+        """Every property of an interface with its current value."""
         if iface == ROOT_IFACE:
             return {
                 "CanQuit": GLib.Variant("b", True),
@@ -170,9 +178,11 @@ class MprisService:
 
     @staticmethod
     def _track_path(track) -> str:
+        """The D-Bus object path identifying a track."""
         return f"{TRACK_PATH}{track.id}"
 
     def _metadata(self) -> dict:
+        """The playing song's MPRIS metadata (title, artist, album, length, cover…)."""
         t = self.player.current
         if t is None:
             return {"mpris:trackid": GLib.Variant("o", NO_TRACK)}
@@ -195,6 +205,7 @@ class MprisService:
     # ---- outgoing notifications ----
 
     def _on_track_changed(self, _player, track):
+        """Announce the new song; its cover URL follows once the cover is cached."""
         self._art_url = ""
         self._changed(PLAYER_IFACE, "Metadata", "CanPlay", "CanPause", "CanSeek", "CanGoNext", "CanGoPrevious")
         if track is None:
@@ -210,10 +221,12 @@ class MprisService:
         self.art.request_track(track, LARGE, on_art)
 
     def _on_seeked(self, _player, seconds):
+        """Emit the Seeked signal after a seek."""
         if self._conn:
             self._conn.emit_signal(None, OBJECT_PATH, PLAYER_IFACE, "Seeked", GLib.Variant("(x)", (int(seconds * 1e6),)))
 
     def _changed(self, iface, *props):
+        """Emit PropertiesChanged for the given properties."""
         if not self._conn:
             return
         values = self._properties(iface)

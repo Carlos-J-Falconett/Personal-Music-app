@@ -30,11 +30,13 @@ _FEAT = re.compile(r"\s*[\(\[]?\s*(feat\.?|ft\.?|featuring|with)\s.*$", re.IGNOR
 
 @dataclass
 class Lyrics:
+    """A lookup result. `lines` are (seconds, text) for synced lyrics, (None, text) for plain ones."""
     kind: str  # "synced" | "plain" | "instrumental" | "none" | "error"
     lines: list = field(default_factory=list)  # [(seconds or None, text)]
     source: str = ""  # "embedded" | "file" | "lrclib"
 
     def to_json(self):
+        """The cache file's contents (with the time it was saved)."""
         return {"kind": self.kind, "lines": self.lines, "source": self.source, "saved": time.time()}
 
 
@@ -75,10 +77,13 @@ def from_text(text: str, source: str) -> Lyrics | None:
 
 
 def _clean(name: str) -> str:
+    """A title or artist without "feat. …" / "(with …)" parts, which confuse the lookup."""
     return _FEAT.sub("", name or "").strip()
 
 
 class LyricsService:
+    """Finds a song's lyrics on worker threads and remembers results for the session."""
+
     def __init__(self):
         LYRICS_DIR.mkdir(parents=True, exist_ok=True)
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="lyrics")
@@ -98,6 +103,7 @@ class LyricsService:
         self._cache_file(track).unlink(missing_ok=True)
 
     def _lookup_async(self, track, callback):
+        """Worker thread: look up, remember the result, deliver it on the main thread."""
         try:
             result = self.lookup(track)
         except Exception as exc:  # never leave the UI spinning
@@ -110,11 +116,13 @@ class LyricsService:
     # ---- lookup chain (runs on worker threads) ----
 
     def lookup(self, track) -> Lyrics:
+        """The lookup chain: embedded tags, then a sidecar file, then the disk cache, then lrclib.net."""
         return (self._embedded(track) or self._sidecar(track) or self._cached(track)
                 or self._online(track))
 
     @staticmethod
     def _embedded(track) -> Lyrics | None:
+        """Lyrics stored in the audio file's tags (ID3 SYLT/USLT, Vorbis/FLAC/MP4 fields)."""
         try:
             audio = mutagen.File(track.path)
         except Exception:
@@ -145,6 +153,7 @@ class LyricsService:
 
     @staticmethod
     def _sidecar(track) -> Lyrics | None:
+        """Lyrics in a .lrc or .txt file next to the song."""
         base = Path(track.path)
         for ext in (".lrc", ".LRC", ".txt"):
             candidate = base.with_suffix(ext)
@@ -158,9 +167,11 @@ class LyricsService:
         return None
 
     def _cache_file(self, track) -> Path:
+        """The disk cache file for a song's online lookup."""
         return LYRICS_DIR / f"{hashlib.sha1(track.path.encode()).hexdigest()}.json"
 
     def _cached(self, track) -> Lyrics | None:
+        """A previous online result; "not found" results are retried after a week."""
         path = self._cache_file(track)
         try:
             data = json.loads(path.read_text())
@@ -174,12 +185,15 @@ class LyricsService:
             return None
 
     def _save(self, track, lyrics: Lyrics):
+        """Cache an online result."""
         try:
             self._cache_file(track).write_text(json.dumps(lyrics.to_json()))
         except OSError:
             pass
 
     def _online(self, track) -> Lyrics:
+        """Ask lrclib.net (cached answers first, then a full lookup, then a search by duration).
+        Network trouble gives an "error" result, which isn't cached."""
         title, artist = _clean(track.title), _clean(track.artist)
         params = {
             "track_name": title,
@@ -213,6 +227,7 @@ class LyricsService:
 
     @staticmethod
     def _fetch(endpoint: str, params: dict):
+        """GET an lrclib.net endpoint as JSON; None for "not found"."""
         url = f"{LRCLIB}/{endpoint}?{urllib.parse.urlencode(params)}"
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
@@ -224,6 +239,7 @@ class LyricsService:
             raise
 
     def _search(self, title, artist, duration):
+        """The best search result within DURATION_TOLERANCE seconds, synced lyrics preferred."""
         results = self._fetch("search", {"track_name": title, "artist_name": artist}) or []
         close = [r for r in results if abs((r.get("duration") or 0) - duration) <= DURATION_TOLERANCE]
         if not close:

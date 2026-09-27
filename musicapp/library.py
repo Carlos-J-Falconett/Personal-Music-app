@@ -7,6 +7,7 @@ from .database import Database
 
 
 def format_time(seconds: float) -> str:
+    """Seconds as "m:ss", or "h:mm:ss" from an hour up."""
     seconds = max(0, int(seconds))
     h, rem = divmod(seconds, 3600)
     m, s = divmod(rem, 60)
@@ -14,6 +15,7 @@ def format_time(seconds: float) -> str:
 
 
 def format_total(seconds: float) -> str:
+    """A total length for page subtitles: "42 min" or "2 h 5 min"."""
     minutes = int(seconds // 60)
     if minutes < 60:
         return f"{minutes} min"
@@ -22,10 +24,13 @@ def format_total(seconds: float) -> str:
 
 
 def sort_key(item):
+    """The library's natural order: artist, album, disc, track number, title."""
     return (item.artist_key.casefold(), item.album.casefold(), item.disc_no, item.track_no, item.title_key)
 
 
 class TrackItem(GObject.Object):
+    """One song, shared by every view. `favorite` and `playing` are GObject properties, so every list
+    showing the song updates when they change. Built from (and refreshed by) a database row."""
     __gtype_name__ = "TrackItem"
 
     favorite = GObject.Property(type=bool, default=False)
@@ -37,6 +42,7 @@ class TrackItem(GObject.Object):
         self.update(row)
 
     def update(self, row):
+        """Refresh the fields from a database row (after a rescan re-read its tags)."""
         self.path = row["path"]
         self.dir = row["dir"]
         self.title = row["title"]
@@ -75,10 +81,12 @@ class AlbumItem(GObject.Object):
 
     @property
     def key(self):
+        """(artist, album title): identifies the album for navigation (Library.find_album)."""
         return (self.artist, self.title)
 
 
 def _group_albums(tracks: list[TrackItem]) -> list[AlbumItem]:
+    """Group tracks into albums by (grouping artist, album title), sorted by artist, year, title."""
     groups: dict[tuple[str, str], list[TrackItem]] = {}
     for t in tracks:
         groups.setdefault((t.artist_key, t.album), []).append(t)
@@ -88,6 +96,8 @@ def _group_albums(tracks: list[TrackItem]) -> list[AlbumItem]:
 
 
 class Library(GObject.Object):
+    """The in-memory library: one TrackItem per track, the grouped artists and albums (cached until
+    the next reload), and favorites and playlists (stored in the database, changes announced by signals)."""
     __gsignals__ = {
         # Tracks were added/removed/retagged.
         "changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
@@ -105,6 +115,7 @@ class Library(GObject.Object):
         self.reload(emit=False)
 
     def reload(self, emit=True):
+        """Re-read every track from the database, keeping existing TrackItem objects so views stay bound."""
         seen = set()
         for row in self.db.all_tracks():
             item = self.items.get(row["id"])
@@ -127,9 +138,11 @@ class Library(GObject.Object):
             self.emit("changed")
 
     def get(self, track_id: int) -> TrackItem | None:
+        """The TrackItem for an id, or None."""
         return self.items.get(track_id)
 
     def resolve(self, track_ids) -> list[TrackItem]:
+        """TrackItems for ids, skipping ids no longer in the library."""
         return [self.items[t] for t in track_ids if t in self.items]
 
     # ---- artists ----
@@ -151,6 +164,7 @@ class Library(GObject.Object):
         return [a for a, folded in zip(artists, self._artist_folded) if all(t in folded for t in terms)]
 
     def artist_tracks(self, name: str) -> list[TrackItem]:
+        """An artist's tracks in library order."""
         self.artists()
         return list(self._artist_index.get(name, []))
 
@@ -167,19 +181,23 @@ class Library(GObject.Object):
         return self._albums
 
     def albums_for_artist(self, name: str) -> list[AlbumItem]:
+        """An artist's albums, oldest first."""
         self.all_albums()
         return list(self._albums_by_artist.get(name, []))
 
     def find_album(self, key) -> AlbumItem | None:
+        """The album with this (artist, title) key, or None."""
         self.all_albums()
         return self._albums_by_key.get(tuple(key))
 
     # ---- favorites ----
 
     def favorite_items(self) -> list[TrackItem]:
+        """Favorite tracks, most recently favorited first."""
         return self.resolve(self.db.favorite_ids())
 
     def set_favorite(self, item: TrackItem, favorite: bool):
+        """Mark or unmark a favorite (saved, and announced with favorites-changed)."""
         if item.favorite == favorite:
             return
         self.db.set_favorite(item.id, favorite)
@@ -192,18 +210,22 @@ class Library(GObject.Object):
     # ---- playlists ----
 
     def playlists(self):
+        """Every playlist as rows of (id, name, count)."""
         return self.db.playlists()
 
     def playlist_name(self, playlist_id: int) -> str | None:
+        """A playlist's name, or None if it doesn't exist."""
         for p in self.db.playlists():
             if p["id"] == playlist_id:
                 return p["name"]
         return None
 
     def playlist_items(self, playlist_id: int) -> list[TrackItem]:
+        """A playlist's tracks in order."""
         return self.resolve(self.db.playlist_track_ids(playlist_id))
 
     def playlists_with(self, item: TrackItem) -> set[int]:
+        """Ids of the playlists containing this track."""
         return self.db.playlists_with(item.id)
 
     def create_playlist(self, name: str) -> int:
@@ -220,6 +242,7 @@ class Library(GObject.Object):
         self.emit("playlists-changed")
 
     def add_to_playlist(self, playlist_id: int, items: list[TrackItem]) -> int:
+        """Append tracks not already in the playlist; returns how many were added."""
         added = self.db.add_to_playlist(playlist_id, [i.id for i in items])
         if added:
             self.emit("playlists-changed")

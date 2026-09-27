@@ -28,6 +28,7 @@ class Swatch(Gtk.DrawingArea):
             self.queue_draw()
 
     def _draw(self, _area, cr, width, height):
+        """Draw the dot (and, for Auto colours, a smaller dot in a dashed ring)."""
         r = min(width, height) / 2 - 1
         cr.arc(width / 2, height / 2, r - (3 if self._auto else 0), 0, 2 * math.pi)
         if self._rgb is None:
@@ -44,6 +45,8 @@ class Swatch(Gtk.DrawingArea):
 
 
 class ThemeDialog(Adw.Dialog):
+    """The Themes dialog: pick the active theme, and create, edit, duplicate or delete themes."""
+
     def __init__(self, win):
         super().__init__(title="Themes", content_width=460, content_height=640)
         self.win = win
@@ -76,6 +79,7 @@ class ThemeDialog(Adw.Dialog):
         self.connect("closed", lambda *_: self._on_closed())
 
     def _on_closed(self):
+        """Stop listening, and drop any unsaved preview."""
         if self._listener in self.themes.listeners:
             self.themes.listeners.remove(self._listener)
         editor = self.nav.find_page("editor")
@@ -83,11 +87,13 @@ class ThemeDialog(Adw.Dialog):
             editor.discard()
 
     def toast(self, text):
+        """Show a short message inside the dialog."""
         self.toasts.add_toast(Adw.Toast(title=GLib.markup_escape_text(text), timeout=3))
 
     # ---- theme list ----
 
     def _reload(self):
+        """Rebuild the theme list (each with its colour swatches and buttons)."""
         for row in self._rows:
             self.group.remove(row)
         self._rows = []
@@ -121,16 +127,19 @@ class ThemeDialog(Adw.Dialog):
 
     @staticmethod
     def _icon_button(icon, tooltip, callback):
+        """A flat icon button for a theme row."""
         button = Gtk.Button(icon_name=icon, tooltip_text=tooltip, valign=Gtk.Align.CENTER)
         button.add_css_class("flat")
         button.connect("clicked", callback)
         return button
 
     def _select(self, name):
+        """A theme was ticked: make it active."""
         if name != self.themes.active:
             GLib.idle_add(lambda: self.themes.select(name) and False)  # rebuilds the rows: not mid-signal
 
     def _confirm_delete(self, theme):
+        """Confirm, then delete a theme."""
         alert = Adw.AlertDialog(heading=f"Delete “{theme.name}”?",
                                 body="This theme will be removed. If it's in use, the Default theme returns.")
         alert.add_response("cancel", "Cancel")
@@ -140,18 +149,23 @@ class ThemeDialog(Adw.Dialog):
         alert.present(self)
 
     def _delete(self, theme):
+        """Delete a theme and say so."""
         self.themes.delete(theme.name)
         self.toast(f"Deleted “{theme.name}”")
 
     # ---- editor ----
 
     def edit(self, theme: Theme | None, start_from: Theme | None = None):
+        """Open the editor on a theme, or (theme None) on a new theme copied from `start_from`."""
         if self.nav.find_page("editor") is not None:
             return
         self.nav.push(ThemeEditor(self, theme, start_from or theme or default_theme()))
 
 
 class ThemeEditor(Adw.NavigationPage):
+    """Edits a theme's name and colours. Valid colours preview live on the whole app; leaving without
+    saving reverts. Basic colours are required; each detailed colour may be left on Auto."""
+
     def __init__(self, dialog: ThemeDialog, theme: Theme | None, source: Theme):
         super().__init__(title="Edit Theme" if theme else "New Theme", tag="editor")
         self.dialog = dialog
@@ -230,6 +244,7 @@ class ThemeEditor(Adw.NavigationPage):
         self._validate()
 
     def _color_row(self, key, label, desc):
+        """A colour row: hex entry, with a swatch button that opens the colour picker."""
         row = Adw.EntryRow(title=GLib.markup_escape_text(label), tooltip_text=desc)
         swatch = Swatch(size=18)
         # The swatch is also a button that opens the colour picker for this row.
@@ -253,6 +268,7 @@ class ThemeEditor(Adw.NavigationPage):
         chooser.choose_rgba(self.dialog.win, initial, None, lambda d, result: self._on_picked(d, result, row))
 
     def _on_picked(self, chooser, result, row):
+        """Put the picked colour in the row."""
         try:
             rgba = chooser.choose_rgba_finish(result)
         except GLib.Error:
@@ -260,6 +276,7 @@ class ThemeEditor(Adw.NavigationPage):
         row.set_text(to_hex((rgba.red, rgba.green, rgba.blue)))  # validation + live preview follow
 
     def _unique_name(self, base):
+        """`base`, or "base 2", "base 3"… if it's taken."""
         name, n = base, 2
         while self.themes.name_taken(name):
             name, n = f"{base} {n}", n + 1
@@ -289,6 +306,7 @@ class ThemeEditor(Adw.NavigationPage):
         return {k: v for k, v in values.items() if v}
 
     def _validate(self):
+        """Mark invalid entries, update swatches and group subtitles, enable Save, and preview."""
         if self._filling:
             return
         values, bad = self._values()
@@ -320,6 +338,7 @@ class ThemeEditor(Adw.NavigationPage):
             self.themes.preview(shown)
 
     def _save(self):
+        """Save the theme (renaming it if the name changed) and make it active."""
         values, bad = self._values()
         values = self._shown(values)
         name = self.name_row.get_text().strip()

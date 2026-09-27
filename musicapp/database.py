@@ -77,10 +77,12 @@ class Database:
         self._conn.commit()
 
     def _query(self, sql, params=()):
+        """Run a SELECT and return all rows."""
         with self._lock:
             return self._conn.execute(sql, params).fetchall()
 
     def _write(self, sql, params=()):
+        """Run one write statement and commit it."""
         with self._lock:
             cur = self._conn.execute(sql, params)
             self._conn.commit()
@@ -103,6 +105,7 @@ class Database:
         return {r["path"]: (r["mtime"], r["size"]) for r in rows}
 
     def upsert_tracks(self, records: list[dict]):
+        """Insert new tracks and update existing ones (matched by path) in one transaction."""
         if not records:
             return
         cols = ", ".join(TRACK_FIELDS)
@@ -114,6 +117,8 @@ class Database:
             self._conn.commit()
 
     def delete_paths(self, paths: list[str]):
+        """Forget tracks by path; their favorites, playlist entries and EQ go with them (ON DELETE CASCADE).
+"""
         if not paths:
             return
         with self._lock:
@@ -121,11 +126,13 @@ class Database:
             self._conn.commit()
 
     def all_tracks(self):
+        """Every track row."""
         return self._query("SELECT * FROM tracks")
 
     # ---- favorites ----------------------------------------------------
 
     def favorite_ids(self) -> list[int]:
+        """Favorite track ids, most recently added first."""
         return [r[0] for r in self._query("SELECT track_id FROM favorites ORDER BY added DESC")]
 
     def set_favorite(self, track_id: int, favorite: bool):
@@ -137,6 +144,7 @@ class Database:
     # ---- playlists ----------------------------------------------------
 
     def playlists(self):
+        """Every playlist as rows of (id, name, count), sorted by name."""
         return self._query(
             "SELECT p.id, p.name, COUNT(pt.track_id) AS count FROM playlists p "
             "LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id "
@@ -153,6 +161,7 @@ class Database:
         self._write("DELETE FROM playlists WHERE id = ?", (playlist_id,))
 
     def playlist_track_ids(self, playlist_id: int) -> list[int]:
+        """A playlist's track ids in playlist order."""
         rows = self._query(
             "SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position", (playlist_id,)
         )
@@ -189,6 +198,7 @@ class Database:
         return {r[0] for r in self._query("SELECT playlist_id FROM playlist_tracks WHERE track_id = ?", (track_id,))}
 
     def remove_from_playlist(self, playlist_id: int, track_ids: list[int]):
+        """Take tracks out of a playlist."""
         with self._lock:
             self._conn.executemany(
                 "DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?",
@@ -199,6 +209,7 @@ class Database:
     # ---- per-song equalizer -------------------------------------------
 
     def get_track_eq(self, track_id: int) -> list[float] | None:
+        """A track's saved equalizer gains (dB per band), or None when it has none."""
         rows = self._query("SELECT gains FROM track_eq WHERE track_id = ?", (track_id,))
         if not rows:
             return None
@@ -208,6 +219,7 @@ class Database:
             return None
 
     def set_track_eq(self, track_id: int, gains: list[float]):
+        """Save a track's equalizer gains."""
         self._write(
             "INSERT INTO track_eq (track_id, gains) VALUES (?, ?) ON CONFLICT(track_id) DO UPDATE SET gains=excluded.gains",
             (track_id, json.dumps([round(g, 2) for g in gains])),
@@ -219,6 +231,7 @@ class Database:
     # ---- settings -----------------------------------------------------
 
     def get_setting(self, key: str, default=None):
+        """A saved setting (stored as JSON), or `default`."""
         rows = self._query("SELECT value FROM settings WHERE key = ?", (key,))
         if not rows:
             return default
@@ -231,6 +244,7 @@ class Database:
         self._write("DELETE FROM settings WHERE key = ?", (key,))
 
     def set_setting(self, key: str, value):
+        """Save a setting; any JSON-serializable value."""
         self._write(
             "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, json.dumps(value)),

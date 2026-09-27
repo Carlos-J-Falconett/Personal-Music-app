@@ -99,6 +99,7 @@ class SongList(Gtk.Box):
 
     @staticmethod
     def _apply_compact(song_list, level):
+        """Phone-sized windows: the header's buttons go under the title."""
         tiny = level == 2
         song_list.header.set_orientation(Gtk.Orientation.VERTICAL if tiny else Gtk.Orientation.HORIZONTAL)
         song_list.header_actions.set_halign(Gtk.Align.START if tiny else Gtk.Align.FILL)
@@ -106,6 +107,7 @@ class SongList(Gtk.Box):
     # ---- columns ----
 
     def _add_column(self, title, setup, bind, *, expand=False, fixed=None, sorter=None):
+        """Add a column with its cell factory and optional sorter."""
         factory = Gtk.SignalListItemFactory()
         factory.connect("setup", setup)
         factory.connect("bind", bind)
@@ -119,6 +121,7 @@ class SongList(Gtk.Box):
         return col
 
     def _text_cell(self, getter, xalign=0.0, css=None):
+        """setup/bind callbacks for a plain text cell showing getter(item)."""
         def setup(_f, li):
             label = Gtk.Label(xalign=xalign, ellipsize=3, hexpand=True)  # 3 = Pango.EllipsizeMode.END
             for name in (css or "").split():
@@ -134,6 +137,7 @@ class SongList(Gtk.Box):
         return setup, bind
 
     def _setup_song(self, _f, li):
+        """The Song cell: title above artist."""
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER, hexpand=True)
         title = Gtk.Label(xalign=0, ellipsize=3)
         title.add_css_class("song-title")
@@ -146,6 +150,7 @@ class SongList(Gtk.Box):
         li.set_child(box)
 
     def _bind_song(self, _f, li):
+        """Fill the Song cell and follow the song's `playing` flag."""
         box, item = li.get_child(), li.get_item()
         title, artist = box._labels
         title.set_text(item.title)
@@ -155,6 +160,7 @@ class SongList(Gtk.Box):
         box._handlers = title._handlers  # _unbind looks for handlers on the cell's child
 
     def _setup_heart(self, _f, li):
+        """The favorite heart cell."""
         btn = Gtk.Button(valign=Gtk.Align.CENTER, halign=Gtk.Align.CENTER)
         btn.add_css_class("flat")
         btn.add_css_class("circular")
@@ -163,12 +169,14 @@ class SongList(Gtk.Box):
         li.set_child(btn)
 
     def _bind_heart(self, _f, li):
+        """Fill the heart and follow the song's `favorite` flag."""
         btn, item = li.get_child(), li.get_item()
         btn._item = item
         update_heart(btn, item.favorite)
         btn._handlers = [(item, item.connect("notify::favorite", lambda it, _p: update_heart(btn, it.favorite)))]
 
     def _track_playing(self, widget, item):
+        """Highlight `widget` while `item` is the playing song (the handler is dropped on unbind)."""
         def update(*_):
             if item.playing:
                 widget.add_css_class("playing-row")
@@ -179,6 +187,7 @@ class SongList(Gtk.Box):
 
     @staticmethod
     def _unbind(_f, li):
+        """A row is being reused: disconnect the handlers its cell had on the old song."""
         child = li.get_child()
         for obj, hid in getattr(child, "_handlers", []):
             obj.disconnect(hid)
@@ -188,6 +197,7 @@ class SongList(Gtk.Box):
     # ---- data ----
 
     def set_items(self, items: list[TrackItem]):
+        """Show these songs (replacing the current ones) and update the summary."""
         self.store.splice(0, self.store.get_n_items(), items)
         total = sum(i.duration for i in items)
         n = len(items)
@@ -195,12 +205,15 @@ class SongList(Gtk.Box):
         self._update_state()
 
     def set_title(self, title: str):
+        """Change the page title."""
         self.title_label.set_text(title)
 
     def visible_items(self) -> list[TrackItem]:
+        """The songs in the order they're shown (after sorting)."""
         return [self.sort_model.get_item(i) for i in range(self.sort_model.get_n_items())]
 
     def _update_state(self):
+        """Show the list or the empty page, and enable Play/Shuffle when there are songs."""
         has_items = self.store.get_n_items() > 0
         self.stack.set_visible_child_name("list" if has_items else "empty")
         self.subtitle_label.set_text(self._summary)
@@ -210,6 +223,7 @@ class SongList(Gtk.Box):
     # ---- playback ----
 
     def play_all(self, shuffle=False):
+        """Play every shown song in order, or shuffled."""
         items = self.visible_items()
         if shuffle:
             self.win.player.shuffle_play(items)
@@ -218,11 +232,13 @@ class SongList(Gtk.Box):
             self.win.player.play_tracks(items, 0)
 
     def _on_activate(self, _view, position):
+        """A song was double-clicked (or activated): play the list from it."""
         self.win.player.play_tracks(self.visible_items(), position)
 
     # ---- context menu ----
 
     def _item_at(self, x, y):
+        """The song under the pointer, or None."""
         widget = self.view.pick(x, y, Gtk.PickFlags.DEFAULT)
         while widget is not None and widget is not self.view:
             for candidate in (widget, widget.get_first_child(),
@@ -234,16 +250,19 @@ class SongList(Gtk.Box):
         return None
 
     def _position_of(self, item):
+        """A song's row position in the sorted list, or -1."""
         for i in range(self.sort_model.get_n_items()):
             if self.sort_model.get_item(i) is item:
                 return i
         return -1
 
     def _selected_items(self):
+        """The selected songs."""
         bitset = self.selection.get_selection()
         return [self.sort_model.get_item(bitset.get_nth(i)) for i in range(bitset.get_size())]
 
     def _on_context(self, x, y):
+        """Right-click / long-press: open the song menu for the song (or the selection it's part of)."""
         item = self._item_at(x, y)
         if item is None:
             return
@@ -258,6 +277,7 @@ class SongList(Gtk.Box):
         self._show_menu(x, y)
 
     def _show_menu(self, x, y):
+        """Build and pop up the song menu for self._menu_items."""
         items = list(self._menu_items)
         menu = AppMenu(width=270)
         page = menu.page
@@ -290,6 +310,7 @@ class SongList(Gtk.Box):
         menu.popup()
 
     def _install_actions(self):
+        """The song menu's actions (songs.*), acting on self._menu_items."""
         group = Gio.SimpleActionGroup()
 
         def add(name, callback, param_type=None):
@@ -310,15 +331,18 @@ class SongList(Gtk.Box):
         self.insert_action_group("songs", group)
 
     def _count_text(self, suffix):
+        """"“Title” <suffix>" for one song, "N songs <suffix>" for several."""
         n = len(self._menu_items)
         return f"“{self._menu_items[0].title}” {suffix}" if n == 1 else f"{n} songs {suffix}"
 
     def _toggle_favorite(self):
+        """Favorite all the menu's songs, or unfavorite them if all already are."""
         target = not all(i.favorite for i in self._menu_items)
         for item in self._menu_items:
             self.win.library.set_favorite(item, target)
 
     def _on_add_to_playlist(self, _action, param):
+        """Add the menu's songs to a playlist and say how many were added."""
         pid = param.unpack()
         added = self.win.library.add_to_playlist(pid, self._menu_items)
         name = self.win.library.playlist_name(pid) or "playlist"

@@ -73,6 +73,7 @@ class Scanner(GObject.Object):
         threading.Thread(target=self._worker, daemon=True, name="library-scan").start()
 
     def _worker(self):
+        """Background thread: run pending scans (merging requests that arrive meanwhile) until none remain."""
         GLib.idle_add(self.emit, "started")
         total_changed = total_removed = 0
         while True:
@@ -93,6 +94,8 @@ class Scanner(GObject.Object):
         GLib.idle_add(self.emit, "finished", total_changed, total_removed)
 
     def _scan_dir(self, root: str) -> tuple[int, int]:
+        """Bring the database in line with one folder tree: read new or changed files, forget removed ones.
+        Returns (files read, files removed)."""
         found = walk_audio_files(root) if os.path.isdir(root) else {}
         known = self.db.file_index(root)
         # A missing or empty library folder (renamed, unmounted) must not wipe the library:

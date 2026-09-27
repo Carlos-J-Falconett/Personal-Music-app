@@ -10,6 +10,8 @@ ARTIST_AVATAR_SIZE = 128
 
 
 class AlbumCard(Gtk.Box):
+    """An album in a grid: cover, title, and year with the song count (or the artist, in search)."""
+
     def __init__(self, art, show_artist: bool = False):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4, halign=Gtk.Align.CENTER)
         self.add_css_class("album-card")
@@ -27,6 +29,7 @@ class AlbumCard(Gtk.Box):
             self.append(w)
 
     def set_album(self, album):
+        """Show an album (cards are reused as the grid scrolls)."""
         self.album = album
         self.cover.set_track(album.tracks[0] if album.tracks else None)
         self.title.set_text(album.title)
@@ -37,6 +40,8 @@ class AlbumCard(Gtk.Box):
 
 
 class ArtistCard(Gtk.Box):
+    """An artist in a grid: round picture, name and song count."""
+
     def __init__(self, art):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6, halign=Gtk.Align.CENTER)
         self.art = art
@@ -52,6 +57,7 @@ class ArtistCard(Gtk.Box):
             self.append(w)
 
     def set_artist(self, name: str, tracks: list):
+        """Show an artist (cards are reused as the grid scrolls)."""
         self.name = name
         self.avatar.set_text(name)
         self.avatar.set_custom_image(None)
@@ -61,6 +67,7 @@ class ArtistCard(Gtk.Box):
         self.count.set_text(f"{n} song{'s' if n != 1 else ''}")
 
         def apply(texture, token=name):
+            """Show the picture, unless the card now shows another artist."""
             if self.name == token and texture is not None:
                 self.avatar.set_custom_image(texture)
 

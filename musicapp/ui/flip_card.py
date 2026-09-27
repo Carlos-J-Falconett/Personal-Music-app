@@ -11,6 +11,8 @@ FLIP_MS = 450
 
 
 class FlipCard(Gtk.Widget):
+    """A card with a front and a back that flips over (set_flipped), and whose back can do a half turn
+    onto new content (turn). Only the side facing the viewer is drawn and receives input."""
     __gtype_name__ = "FlipCard"
 
     def __init__(self, front: Gtk.Widget, back: Gtk.Widget):
@@ -36,9 +38,11 @@ class FlipCard(Gtk.Widget):
 
     @property
     def flipped(self) -> bool:
+        """Whether the back is (or is turning to be) showing."""
         return self._flipped
 
     def set_flipped(self, flipped: bool, animate: bool = True):
+        """Flip to the back (True) or the front, animated unless `animate` is False or it's hidden."""
         if flipped == self._flipped:
             return
         self._flipped = flipped
@@ -73,6 +77,7 @@ class FlipCard(Gtk.Widget):
             self._turn_animation.skip()
 
     def _set_turn(self, value: float):
+        """Animation step of a turn; the content is swapped when the card is edge-on."""
         self._turn = value
         if value >= 0.5 and self._turn_swap is not None:
             swap, self._turn_swap = self._turn_swap, None
@@ -80,6 +85,7 @@ class FlipCard(Gtk.Widget):
         self.queue_draw()
 
     def _end_turn(self):
+        """A turn finished (or was skipped): make sure the swap happened."""
         if self._turn_swap is not None:
             swap, self._turn_swap = self._turn_swap, None
             swap()
@@ -88,11 +94,13 @@ class FlipCard(Gtk.Widget):
         self.queue_draw()
 
     def _set_progress(self, value: float):
+        """Animation step of a flip (0 = front, 1 = back)."""
         self._progress = value
         self._sync_sides()
         self.queue_draw()
 
     def _sync_sides(self):
+        """Only the side facing the viewer is visible, focusable and clickable."""
         back_up = self._progress >= 0.5
         if self.back.get_child_visible() == back_up and self.front.get_child_visible() != back_up:
             return

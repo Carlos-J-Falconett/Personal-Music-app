@@ -13,16 +13,21 @@ PREVIEW_SONGS = 8
 
 
 def _glass(widget):
+    """Give a page the glass card look."""
     widget.add_css_class("content-glass")
     widget.set_overflow(Gtk.Overflow.HIDDEN)  # clip to the rounded card
     return widget
 
 
 def _matches(terms, text):
+    """Whether every search term is in the text."""
     return all(t in text for t in terms)
 
 
 class SearchView(Gtk.Box):
+    """Search results for artists, albums and songs, with All / Songs / Artists / Albums tabs; "All"
+    previews a few of each."""
+
     def __init__(self, win):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.win = win
@@ -81,6 +86,7 @@ class SearchView(Gtk.Box):
     # ---- searching ----
 
     def search(self, text: str):
+        """Search the library (every word must match) and show the results."""
         self._query = text.strip()
         terms = text.casefold().split()
         library = self.win.library
@@ -97,13 +103,16 @@ class SearchView(Gtk.Box):
         self._show_active()
 
     def refresh(self):
+        """Search again after the library changed."""
         if self._query:
             self.search(self._query)
 
     def reset(self):
+        """Back to the All tab (for a new search)."""
         self.toggles.set_active_name("all")
 
     def _show_active(self):
+        """Show the chosen tab, or "No Results"."""
         if not (self._artists or self._albums or self._songs):
             self.no_results.set_description(f"Nothing matches “{self._query}”")
             self.stack.set_visible_child_name("none")
@@ -113,6 +122,7 @@ class SearchView(Gtk.Box):
     # ---- "All" overview ----
 
     def _build_overview(self):
+        """Build the All tab: a few artists, albums and songs, each with See All."""
         while child := self.overview.get_first_child():
             self.overview.remove(child)
 
@@ -153,6 +163,7 @@ class SearchView(Gtk.Box):
             self.overview.append(rows)
 
     def _section(self, title: str, count: int, target: str):
+        """A section heading, with See All when there are more than the preview shows."""
         header = Gtk.Box(margin_top=18, margin_bottom=6)
         label = Gtk.Label(label=title, xalign=0, hexpand=True)
         label.add_css_class("title-3")
@@ -167,6 +178,7 @@ class SearchView(Gtk.Box):
 
     @staticmethod
     def _flowbox() -> Gtk.FlowBox:
+        """A row of preview cards."""
         flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True, activate_on_single_click=True,
                            max_children_per_line=PREVIEW_CARDS, min_children_per_line=1,
                            column_spacing=6, row_spacing=6)

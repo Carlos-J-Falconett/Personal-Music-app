@@ -7,6 +7,7 @@ import mutagen
 
 
 def _first(tags, *keys):
+    """The first non-empty value among tag `keys`, as stripped text, or None."""
     if tags is None:  # not `not tags`: len() on EasyID3 rebuilds its whole key list
         return None
     for key in keys:

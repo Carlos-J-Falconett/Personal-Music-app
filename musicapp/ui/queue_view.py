@@ -11,6 +11,8 @@ QUEUE_DND_PREFIX = "musicapp-queue:"
 
 
 class UpNextEntry(GObject.Object):
+    """A row of Up Next: a track, its position in play order, and whether it comes around again only
+    through Repeat Queue."""
     __gtype_name__ = "UpNextEntry"
 
     def __init__(self, track, queue_index: int, wrapped: bool):
@@ -21,6 +23,9 @@ class UpNextEntry(GObject.Object):
 
 
 class QueueView(Gtk.Box):
+    """The play queue: the playing song, then Up Next (click to play, drag to reorder, × to remove,
+    Clear). Used by the Now Playing panel and the focus view."""
+
     def __init__(self, win):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         self.win = win
@@ -32,6 +37,7 @@ class QueueView(Gtk.Box):
         self._sync()
 
     def _build_queue_view(self):
+        """Build the empty page and the Now Playing / Up Next page."""
         stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, vexpand=True)
         stack.add_named(Adw.StatusPage(icon_name="musicapp-queue-symbolic", title="Queue Is Empty",
                                        description="Double-click a song to start listening"), "empty")
@@ -99,6 +105,8 @@ class QueueView(Gtk.Box):
         return stack
 
     def _setup_row(self, _f, li):
+        """An Up Next row: drag handle, cover, title and artist, length, remove button; it is both a
+        drag source and a drop target."""
         row = Gtk.Box(spacing=10, margin_top=2, margin_bottom=2)
         row.add_css_class("queue-row")
         handle = Gtk.Image(icon_name="list-drag-handle-symbolic")
@@ -137,6 +145,7 @@ class QueueView(Gtk.Box):
         li.set_child(row)
 
     def _bind_row(self, _f, li):
+        """Fill an Up Next row."""
         row, entry = li.get_child(), li.get_item()
         handle, cover, title, artist, duration = row._widgets
         row._entry = entry
@@ -150,6 +159,7 @@ class QueueView(Gtk.Box):
         row.set_tooltip_text("Plays again when the queue repeats" if entry.wrapped else None)
 
     def _on_drop(self, _target, value, _x, _y, row):
+        """A row was dropped onto this one: move it to this position."""
         row.remove_css_class("drop-target")
         entry = row._entry
         if not isinstance(value, str) or not value.startswith(QUEUE_DND_PREFIX) or entry is None or entry.wrapped:
@@ -158,6 +168,7 @@ class QueueView(Gtk.Box):
         return True
 
     def _sync(self):
+        """Rebuild from the player's queue."""
         track = self.player.current
         self.card_cover.set_track(track)
         if track is None:

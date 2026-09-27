@@ -15,6 +15,10 @@ SCROLL_MS = 350
 
 
 class LyricsView(Gtk.Overlay):
+    """The playing song's lyrics over a dimmed copy of its cover. Synced lyrics highlight and scroll to the
+    line being sung (clicking a line seeks there); after a manual scroll, following pauses for a few
+    seconds. Messages for instrumental songs, no lyrics, or network trouble (with Retry)."""
+
     def __init__(self, win, size: int | None = None):
         """size: a fixed square size; None lets the container decide."""
         super().__init__()
@@ -96,21 +100,25 @@ class LyricsView(Gtk.Overlay):
         self.win.app.lyrics.request(track, self._on_lyrics)
 
     def _show_page(self, name):
+        """Switch between loading, lines and message."""
         # Crossfade only while on screen: a hidden stack can't draw the page it's fading from.
         transition = Gtk.StackTransitionType.CROSSFADE if self.get_mapped() else Gtk.StackTransitionType.NONE
         self.stack.set_visible_child_full(name, transition)
 
     def _set_background(self, track, texture):
+        """Show the song's cover behind the lyrics, unless the song changed meanwhile."""
         if track is self._track:
             self.background.set_paintable(texture)
 
     def _retry(self):
+        """Look the lyrics up again (forgetting the cached result)."""
         track, self._track = self._track, None
         if track is not None:
             self.win.app.lyrics.forget(track)
             self.load(track)
 
     def _on_lyrics(self, track, lyrics):
+        """The lookup finished: show the lines or a message."""
         if track is not self._track:
             return  # a newer song was requested meanwhile
         self._lyrics = lyrics
@@ -124,18 +132,21 @@ class LyricsView(Gtk.Overlay):
             self._show_message("network-offline-symbolic", "Couldn't reach lrclib.net", retry=True)
 
     def _show_message(self, icon, text, retry):
+        """Show a message (with Retry when it makes sense)."""
         self.message_icon.set_from_icon_name(icon)
         self.message.set_text(text)
         self.retry.set_visible(retry)
         self._show_page("message")
 
     def _clear_lines(self):
+        """Remove the lyric lines."""
         while child := self.lines_box.get_first_child():
             self.lines_box.remove(child)
         self._labels = []
         self._current = -1
 
     def _show_lines(self, lyrics):
+        """Show the lines; synced ones can be clicked to seek there."""
         self._clear_lines()
         synced = lyrics.kind == "synced"
         for index, (seconds, text) in enumerate(lyrics.lines):
@@ -159,11 +170,13 @@ class LyricsView(Gtk.Overlay):
     # ---- following the song ----
 
     def _on_user_scroll(self, *_):
+        """The user scrolled: stop following the song for FOLLOW_PAUSE_S."""
         self._user_scrolled_at = time.monotonic()
         self._scroll_anim.pause()
         return False
 
     def _on_position(self, position, force=False):
+        """Highlight the line being sung and scroll to it (synced lyrics only)."""
         lyrics = self._lyrics
         if lyrics is None or lyrics.kind != "synced" or self._track is not self.player.current:
             return
@@ -184,6 +197,7 @@ class LyricsView(Gtk.Overlay):
             self._scroll_to(index)
 
     def _scroll_to(self, index):
+        """Smoothly scroll so the line is in the middle."""
         if not (0 <= index < len(self._labels)) or not self.get_mapped():
             return
         label = self._labels[index]

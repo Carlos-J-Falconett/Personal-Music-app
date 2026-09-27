@@ -58,6 +58,9 @@ class PopupArea(Gtk.Widget):
 
 
 class FocusView(Gtk.Overlay):
+    """The focus view (see the module docstring): exit button, the song with its controls, and the Queue /
+    Lyrics / Equalizer buttons whose popup card flips between pages."""
+
     def __init__(self, win):
         super().__init__()
         self.add_css_class("focus-view")
@@ -205,6 +208,7 @@ class FocusView(Gtk.Overlay):
         return True
 
     def _on_toggled(self, button, name):
+        """A popup button was toggled: open its page (turning the card if another was open) or close it."""
         if button.get_active():
             previous, self._popup = self._popup, name
             if name == "lyrics":
@@ -226,6 +230,7 @@ class FocusView(Gtk.Overlay):
     # ---- following the player ----
 
     def _sync(self):
+        """A new song: update the title and links, and what the popup buttons can do."""
         track = self.player.current
         playing = track is not None
         for name in ("lyrics", "eq"):
@@ -245,11 +250,13 @@ class FocusView(Gtk.Overlay):
             self.lyrics_view.load(track)
 
     def _goto_artist(self, *_):
+        """Leave the focus view and go to the song's artist."""
         if self.player.current:
             self.win.set_focus_mode(False)
             self.win.show_artist(self.player.current.artist_key)
 
     def _goto_album(self, *_):
+        """Leave the focus view and go to the song's album."""
         t = self.player.current
         if t:
             self.win.set_focus_mode(False)

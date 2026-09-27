@@ -11,6 +11,7 @@ _textures: dict[bool, Gdk.Texture] = {}
 
 
 def mode_texture(black_hole: bool) -> Gdk.Texture:
+    """The Sun or Black Hole picture (loaded once)."""
     if black_hole not in _textures:
         _textures[black_hole] = Gdk.Texture.new_from_filename(str(BLACK_HOLE_ICON if black_hole else SUN_ICON))
     return _textures[black_hole]
@@ -22,17 +23,20 @@ def follow_mode(image: Gtk.Image, art):
     image.set_from_paintable(mode_texture(art.turned))
 
     def on_change(name):
+        """The mode switched: flip to its picture."""
         if name is None:  # None: the mode switched
             flip_to(image, mode_texture(art.turned))
 
     # Listen only while on screen: menus build a new icon each time they open, and a listener
     # kept for good would keep every old icon alive.
     def on_map(*_):
+        """On screen: show the current mode's picture and follow switches."""
         image.set_from_paintable(mode_texture(art.turned))
         if on_change not in art.artist_listeners:
             art.artist_listeners.append(on_change)
 
     def on_unmap(*_):
+        """Off screen: stop following (so hidden icons can be freed)."""
         if on_change in art.artist_listeners:
             art.artist_listeners.remove(on_change)
 
@@ -51,6 +55,7 @@ def flip_to(image: Gtk.Image, paintable):
     image.add_css_class("mode-flip-out")
 
     def swap():
+        """Edge-on: swap the picture and turn the new one into view."""
         image.set_from_paintable(paintable)
         image.remove_css_class("mode-flip-out")
         image.add_css_class("mode-flip-in")
@@ -61,6 +66,8 @@ def flip_to(image: Gtk.Image, paintable):
 
 
 class ModeIcon(Gtk.Image):
+    """An image showing the Sun, or the Black Hole in Black Hole mode (the main menu's icon)."""
+
     def __init__(self, art, pixel_size: int = 22):
         super().__init__(pixel_size=pixel_size)
         self.add_css_class("mode-icon")

@@ -16,6 +16,9 @@ REPEAT_ICONS = {
 
 
 class PlayerControls(Gtk.Box):
+    """The time bar, playback buttons (shuffle, previous, play/pause, next, repeat) and volume. Several
+    exist (panel, compact view, focus view); all follow the player's signals."""
+
     def __init__(self, win):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.add_css_class("player-controls")
@@ -85,6 +88,7 @@ class PlayerControls(Gtk.Box):
     # ---- player -> UI ----
 
     def _on_track_changed(self, _player, track):
+        """A new song: cancel a pending seek from the old one; disable the time bar with no song."""
         if self._seek_timeout:  # a drag on the previous song mustn't seek this one
             GLib.source_remove(self._seek_timeout)
             self._seek_timeout = 0
@@ -94,20 +98,24 @@ class PlayerControls(Gtk.Box):
             self._set_time(0, 0)
 
     def _on_state_changed(self, _player, playing):
+        """Show Play or Pause."""
         self.play_btn.set_icon_name("media-playback-pause-symbolic" if playing else "media-playback-start-symbolic")
         self.play_btn.set_tooltip_text("Pause" if playing else "Play")
 
     def _on_position(self, _player, position, duration):
+        """Move the time bar with playback (not while the user drags it)."""
         if not self._seeking:
             self._set_time(position, duration)
 
     def _set_time(self, position, duration):
+        """Set the time bar and the elapsed / total labels."""
         self.adjustment.set_upper(max(duration, 1))
         self.adjustment.set_value(min(position, max(duration, 1)))
         self.elapsed.set_text(format_time(position))
         self.total.set_text(format_time(duration))
 
     def _on_modes(self):
+        """Show shuffle and repeat as on or off."""
         if self.player.shuffle:
             self.shuffle_btn.add_css_class("active")
             self.shuffle_btn.set_tooltip_text("Shuffle: On")
@@ -123,6 +131,7 @@ class PlayerControls(Gtk.Box):
             self.repeat_btn.add_css_class("active")
 
     def _on_volume(self, _player, value):
+        """Move the volume slider and pick the speaker icon."""
         self.volume.handler_block(self._volume_handler)
         self.volume.set_value(value)
         self.volume.handler_unblock(self._volume_handler)
@@ -153,12 +162,14 @@ class PlayerControls(Gtk.Box):
         return True
 
     def _commit_seek(self):
+        """The drag settled: seek there."""
         self._seek_timeout = 0
         self.player.seek(self.adjustment.get_value())
         self._seeking = False
         return False
 
     def _toggle_mute(self, *_):
+        """The speaker button: mute (volume 0), or back to the volume before."""
         if self.player.volume > 0:
             self._muted_volume = self.player.volume
             self.player.set_volume(0)

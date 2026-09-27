@@ -28,6 +28,7 @@ class LibraryWatcher:
         scanner.connect("finished", lambda *_: self.refresh())
 
     def start(self):
+        """Start watching (after the first scan)."""
         self.refresh()
 
     def refresh(self):
@@ -48,6 +49,7 @@ class LibraryWatcher:
             self._monitors[new] = mon
 
     def _on_changed(self, _mon, file, other, event, directory):
+        """A file or folder changed: remember its folder and (re)start the debounce timer."""
         if event not in _RELEVANT:
             return
         self._dirty.add(directory)
@@ -61,12 +63,14 @@ class LibraryWatcher:
         self._timeout_id = GLib.timeout_add(DEBOUNCE_MS, self._flush)
 
     def _flush(self):
+        """Debounce time is up: rescan the folders that changed."""
         self._timeout_id = 0
         dirs, self._dirty = self._dirty, set()
         self.scanner.scan(dirs)
         return False
 
     def stop(self):
+        """Stop watching."""
         for mon in self._monitors.values():
             mon.cancel()
         self._monitors.clear()

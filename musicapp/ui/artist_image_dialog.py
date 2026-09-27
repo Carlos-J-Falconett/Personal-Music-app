@@ -4,12 +4,16 @@ and the background slideshow, which replaces artist images while Black Hole mode
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
-from ..art import SLIDE_SECONDS_MAX, SLIDE_SECONDS_MIN, THUMB, is_video
+from ..art import THUMB
 from .artists_view import ArtistItem
-from .silent_video import SilentVideo
+from .slideshow_pages import SlideshowsPage, _Page
 
 
 class ArtistImageDialog(Adw.Dialog):
+    """The Artist Images dialog: a searchable list of artists, each opening a page to choose or reset
+    their picture. In Black Hole mode it edits the Black Hole images instead and adds the Background
+    Slideshow entry (pages in slideshow_pages.py)."""
+
     def __init__(self, win, artist: str | None = None):
         super().__init__(title="Artist Images", content_width=440, content_height=620)
         self.win = win
@@ -66,12 +70,13 @@ class ArtistImageDialog(Adw.Dialog):
         self.art.artist_listeners.append(self._listener)
         self.art.slideshow_listeners.append(self._slides_listener)
         self.connect("closed", lambda *_: self._on_closed())
-        self.nav.connect("popped", lambda _nav, page: page.detach() if isinstance(page, SlideshowPage) else None)
+        self.nav.connect("popped", lambda _nav, page: page.detach() if isinstance(page, _Page) else None)
 
         if artist:
             self.show_artist(artist, animate=False)
 
     def _sync_mode(self):
+        """Show whether the dialog edits Black Hole images, and hide the slideshow outside that mode."""
         turned = self.art.turned
         self.list_title.set_subtitle("Black Hole mode" if turned else "")
         (self.add_css_class if turned else self.remove_css_class)("black-hole-mode")
@@ -81,32 +86,44 @@ class ArtistImageDialog(Adw.Dialog):
             self.nav.pop_to_page(self.list_page)  # the slideshow is a Black Hole mode option
 
     def _on_closed(self):
+        """Stop listening for changes (this dialog and its slideshow pages)."""
         self.art.artist_listeners.remove(self._listener)
         self.art.slideshow_listeners.remove(self._slides_listener)
-        page = self.nav.find_page("slideshow")
-        if page is not None:
-            page.detach()
+        stack = self.nav.get_navigation_stack()
+        for i in range(stack.get_n_items()):
+            page = stack.get_item(i)
+            if isinstance(page, _Page):
+                page.detach()
 
     def _sync_slideshow_row(self):
+        """The slideshow row's subtitle: what's showing, how many items, on or off."""
+        ss = self.art.slideshows
+        if not ss.all_media():
+            self.slideshow_row.set_subtitle("Not set")
+            return
         n = len(self.art.slideshow_images())
         state = "On" if self.art.slideshow_enabled else "Off"
-        self.slideshow_row.set_subtitle(f"{n} image{'s' if n != 1 else ''} · {state}" if n else "Not set")
+        self.slideshow_row.set_subtitle(f"{ss.describe_active()} · {n} item{'s' if n != 1 else ''} · {state}")
 
     def show_slideshow(self):
+        """Open the Background Slideshow pages (Black Hole mode only)."""
         if self.art.turned and self.nav.find_page("slideshow") is None:
-            self.nav.push(SlideshowPage(self))
+            self.nav.push(SlideshowsPage(self))
 
     # ---- list ----
 
     def _reload(self):
+        """Rebuild the artist list."""
         self.store.splice(0, self.store.get_n_items(),
                           [ArtistItem(n, t) for n, t in self.win.library.artists()])
 
     def _on_search(self, entry):
+        """Filter the artist list by the search words."""
         self._terms = entry.get_text().casefold().split()
         self.filter.changed(Gtk.FilterChange.DIFFERENT)
 
     def _setup_row(self, _f, li):
+        """An artist row: avatar, name and detail."""
         row = Gtk.Box(spacing=12, margin_top=4, margin_bottom=4, margin_start=4)
         avatar = Adw.Avatar(size=44, show_initials=True)
         labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER, hexpand=True)
@@ -123,6 +140,7 @@ class ArtistImageDialog(Adw.Dialog):
         li.set_child(row)
 
     def _bind_row(self, _f, li):
+        """Fill an artist row; the detail says whether they have a custom image."""
         row, item = li.get_child(), li.get_item()
         avatar, name, detail = row._widgets
         row._name = item.name
@@ -135,6 +153,7 @@ class ArtistImageDialog(Adw.Dialog):
         detail.set_text(label if custom else f"{n} song{'s' if n != 1 else ''}")
 
         def apply(texture, token=item.name):
+            """Show the avatar, unless the row now shows another artist."""
             if row._name == token:
                 avatar.set_custom_image(texture)
 
@@ -143,6 +162,7 @@ class ArtistImageDialog(Adw.Dialog):
     # ---- detail ----
 
     def show_artist(self, name: str, animate: bool = True):
+        """Open an artist's page."""
         tracks = self.win.library.artist_tracks(name)
         self._detail = ArtistDetailPage(self, name, tracks)
         if animate:
@@ -151,6 +171,7 @@ class ArtistImageDialog(Adw.Dialog):
             self.nav.replace([self.list_page, self._detail])
 
     def _on_artist_changed(self, name):
+        """An artist image changed or Black Hole mode switched: refresh the list and the open page."""
         self._reload()  # rebinds rows with fresh avatars and "Custom image" labels
         if name is None:  # Black Hole mode switched
             self._sync_mode()
@@ -158,10 +179,13 @@ class ArtistImageDialog(Adw.Dialog):
             self._detail.refresh()
 
     def toast(self, text):
+        """Show a short message inside the dialog."""
         self.toasts.add_toast(Adw.Toast(title=GLib.markup_escape_text(text), timeout=3))
 
 
 class ArtistDetailPage(Adw.NavigationPage):
+    """One artist: their current picture, and buttons to choose a new one or go back to the default."""
+
     def __init__(self, dialog: ArtistImageDialog, artist: str, tracks: list):
         super().__init__(title=artist, tag=f"artist:{artist}")
         self.dialog = dialog
@@ -197,6 +221,7 @@ class ArtistDetailPage(Adw.NavigationPage):
         self.refresh()
 
     def refresh(self):
+        """Show which picture is in use (yours, the normal one, or the default) and reload it."""
         turned = self.art.turned
         custom = self.art.custom_artist_image(self.artist) is not None
         self.mode_label.set_visible(turned)
@@ -212,6 +237,7 @@ class ArtistDetailPage(Adw.NavigationPage):
                                 lambda tex: self.avatar.set_custom_image(tex))
 
     def _choose(self):
+        """Open a file chooser for an image."""
         images = Gtk.FileFilter(name="Images")
         for mime in ("image/jpeg", "image/png", "image/webp"):
             images.add_mime_type(mime)
@@ -224,6 +250,7 @@ class ArtistDetailPage(Adw.NavigationPage):
         chooser.open(self.dialog.win, None, self._on_chosen)
 
     def _on_chosen(self, chooser, result):
+        """Use the chosen file as the artist's picture (a copy is kept by the app)."""
         try:
             file = chooser.open_finish(result)
         except GLib.Error:
@@ -241,171 +268,9 @@ class ArtistDetailPage(Adw.NavigationPage):
         self.dialog.toast(f"Updated the image for {self.artist}{mode}")
 
     def _reset(self):
+        """Go back to the default picture (in Black Hole mode: to the normal one)."""
         self.art.reset_artist_image(self.artist)
         if self.art.turned:
             self.dialog.toast(f"Removed the Black Hole image for {self.artist}")
         else:
             self.dialog.toast(f"Restored the default image for {self.artist}")
-
-
-class SlideshowPage(Adw.NavigationPage):
-    """Black Hole mode's background slideshow: one set of images and videos shown instead of
-    artist images: each image for a chosen number of seconds, each video until it ends."""
-
-    def __init__(self, dialog: ArtistImageDialog):
-        super().__init__(title="Background Slideshow", tag="slideshow")
-        self.dialog = dialog
-        self.art = dialog.art
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                      margin_start=18, margin_end=18, margin_top=6, margin_bottom=18)
-        self.caption = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
-        self.caption.add_css_class("dim")
-        box.append(self.caption)
-
-        self.switch = Adw.SwitchRow(title="Play Slideshow",
-                                    subtitle="Off shows artist images again")
-        self.switch.set_active(self.art.slideshow_enabled)
-        # Goes through app.slideshow, so the menu's Slideshow item and the saved setting follow.
-        self.switch.connect("notify::active", lambda row, _p: self.art.slideshow_enabled != row.get_active()
-                            and dialog.win.app.change_action_state("slideshow", GLib.Variant("b", row.get_active())))
-        self.seconds = Adw.SpinRow(title="Seconds per Image",
-                                   subtitle="Videos always play to the end",
-                                   adjustment=Gtk.Adjustment(lower=SLIDE_SECONDS_MIN, upper=SLIDE_SECONDS_MAX,
-                                                             step_increment=1, page_increment=10,
-                                                             value=self.art.slideshow_seconds))
-        self.seconds.connect("notify::value", lambda row, _p: self.art.set_slideshow_seconds(int(row.get_value())))
-        switch_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-        switch_list.add_css_class("boxed-list")
-        switch_list.append(self.switch)
-        switch_list.append(self.seconds)
-        box.append(switch_list)
-
-        self.flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
-                                min_children_per_line=2, max_children_per_line=6,
-                                column_spacing=10, row_spacing=10, valign=Gtk.Align.START)
-        self.empty = Adw.StatusPage(icon_name="image-x-generic-symbolic", title="No Images or Videos",
-                                    description="Add a few to start the slideshow", vexpand=True)
-        self.empty.add_css_class("compact")
-        self.stack = Gtk.Stack(vexpand=True)
-        self.stack.add_named(self.empty, "empty")
-        self.stack.add_named(self.flow, "images")
-        box.append(self.stack)
-
-        # Side by side, or one above the other when the dialog is too narrow for both.
-        buttons = Adw.WrapBox(child_spacing=12, line_spacing=10, halign=Gtk.Align.CENTER, margin_top=6)
-        add = Gtk.Button(child=Adw.ButtonContent(icon_name="list-add-symbolic", label="Add Images or Videos…"))
-        add.add_css_class("suggested-action")
-        add.add_css_class("pill")
-        add.connect("clicked", lambda *_: self._choose())
-        self.remove_all = Gtk.Button(label="Remove All")
-        self.remove_all.add_css_class("pill")
-        self.remove_all.connect("clicked", lambda *_: self._confirm_clear())
-        buttons.append(add)
-        buttons.append(self.remove_all)
-        box.append(buttons)
-
-        toolbar = Adw.ToolbarView()
-        toolbar.add_top_bar(Adw.HeaderBar())
-        toolbar.set_content(Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, child=box))
-        self.set_child(toolbar)
-
-        self._videos: list[SilentVideo] = []  # the video thumbnails' players
-        self._listener = self.refresh
-        self.art.slideshow_listeners.append(self._listener)
-        self.refresh()
-
-    def detach(self):
-        """Stop following slideshow changes (the page was popped or the dialog closed)."""
-        if self._listener in self.art.slideshow_listeners:
-            self.art.slideshow_listeners.remove(self._listener)
-        self._stop_videos()
-
-    def _stop_videos(self):
-        for media in self._videos:
-            media.stop()
-        self._videos = []
-
-    def refresh(self):
-        if self.switch.get_active() != self.art.slideshow_enabled:
-            self.switch.set_active(self.art.slideshow_enabled)
-        seconds = self.art.slideshow_seconds
-        if int(self.seconds.get_value()) != seconds:
-            self.seconds.set_value(seconds)
-        self.caption.set_label(f"Shown instead of artist images while Black Hole mode is on, "
-                               f"each image for {seconds} second{'s' if seconds != 1 else ''} "
-                               f"and each video to its end.")
-        self.flow.remove_all()
-        self._stop_videos()
-        images = self.art.slideshow_images()
-        for path in images:
-            self.flow.append(self._thumb(path))
-        self.stack.set_visible_child_name("images" if images else "empty")
-        self.remove_all.set_sensitive(bool(images))
-
-    def _thumb(self, path):
-        # The picture is an overlay so its (wide) natural size doesn't stretch the square thumbnail.
-        picture = Gtk.Picture(content_fit=Gtk.ContentFit.COVER, can_shrink=True)
-        overlay = Gtk.Overlay(overflow=Gtk.Overflow.HIDDEN, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
-        overlay.add_css_class("slide-thumb")
-        overlay.set_child(Gtk.Box(width_request=110, height_request=110))
-        overlay.add_overlay(picture)
-        remove = Gtk.Button(icon_name="window-close-symbolic", tooltip_text="Remove from Slideshow",
-                            halign=Gtk.Align.END, valign=Gtk.Align.START, margin_top=4, margin_end=4)
-        remove.add_css_class("circular")
-        remove.add_css_class("slide-remove")
-        remove.connect("clicked", lambda *_: self.art.remove_slideshow_image(path))
-        overlay.add_overlay(remove)
-        if is_video(path):
-            # The video's first frame (a paused, silent video shows it once it's ready), plus a film badge.
-            media = SilentVideo(path)  # no sound: see silent_video.py
-            picture.set_paintable(media.paintable)
-            self._videos.append(media)  # stopped on the next refresh, or when the page closes
-            badge = Gtk.Image(icon_name="video-x-generic-symbolic", halign=Gtk.Align.START,
-                              valign=Gtk.Align.END, margin_start=6, margin_bottom=6)
-            badge.add_css_class("slide-video-badge")
-            overlay.add_overlay(badge)
-            overlay.set_tooltip_text("Video")
-        else:
-            self.art.request_slide(path, THUMB, lambda texture: picture.set_paintable(texture))
-        return overlay
-
-    def _choose(self):
-        media = Gtk.FileFilter(name="Images and Videos")
-        for mime in ("image/jpeg", "image/png", "image/webp", "video/*"):
-            media.add_mime_type(mime)
-        filters = Gio.ListStore(item_type=Gtk.FileFilter)
-        filters.append(media)
-        chooser = Gtk.FileDialog(title="Choose Slideshow Images or Videos", filters=filters, default_filter=media)
-        pictures = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)
-        if pictures:
-            chooser.set_initial_folder(Gio.File.new_for_path(pictures))
-        chooser.open_multiple(self.dialog.win, None, self._on_chosen)
-
-    def _on_chosen(self, chooser, result):
-        try:
-            files = chooser.open_multiple_finish(result)
-        except GLib.Error:
-            return  # cancelled
-        paths = [f.get_path() for f in files if f.get_path()]
-        if not paths:
-            return
-
-        def done(added, skipped):
-            text = f"Added {added} to the slideshow"
-            if skipped:
-                text += f" ({skipped} couldn't be read)"
-            self.dialog.toast(text)
-
-        if any(is_video(p) for p in paths):
-            self.dialog.toast("Adding…")  # videos take a moment to copy
-        self.art.add_slideshow_images(paths, done)
-
-    def _confirm_clear(self):
-        alert = Adw.AlertDialog(heading="Remove All Images?",
-                                body="The slideshow will stop and artist images will show again.")
-        alert.add_response("cancel", "Cancel")
-        alert.add_response("remove", "Remove All")
-        alert.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
-        alert.connect("response", lambda _a, r: self.art.clear_slideshow() if r == "remove" else None)
-        alert.present(self.dialog)

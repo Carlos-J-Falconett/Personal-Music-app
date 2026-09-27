@@ -21,6 +21,7 @@ class MenuPage(Gtk.Box):
         self._has_rows = False
 
     def clear(self):
+        """Remove every row."""
         while (child := self.get_first_child()) is not None:
             self.remove(child)
         self._has_rows = False
@@ -28,6 +29,7 @@ class MenuPage(Gtk.Box):
     # ---- building blocks ----
 
     def add_header(self, widget: Gtk.Widget):
+        """A header at the top (e.g. the song's cover and title)."""
         widget.add_css_class("menu-header")
         self.append(widget)
         self._has_rows = True
@@ -44,6 +46,7 @@ class MenuPage(Gtk.Box):
             self.append(label)
 
     def _row(self, icon, label, accel=None, trailing=None, detail=None) -> Gtk.Button:
+        """A menu row: icon, label, then optional detail text, shortcut hint and trailing widget."""
         button = Gtk.Button()
         button.add_css_class("flat")
         button.add_css_class("menu-row")
@@ -70,9 +73,10 @@ class MenuPage(Gtk.Box):
         self._has_rows = True
         return button
 
-    def add_item(self, icon, label, callback, accel=None, destructive=False, sensitive=True) -> Gtk.Button:
+    def add_item(self, icon, label, callback, accel=None, destructive=False, sensitive=True,
+                 detail=None) -> Gtk.Button:
         """A row that closes the menu and then runs callback()."""
-        row = self._row(icon, label, accel)
+        row = self._row(icon, label, accel, detail=detail)
         row.set_sensitive(sensitive)
         if destructive:
             row.add_css_class("destructive")
@@ -98,10 +102,12 @@ class MenuPage(Gtk.Box):
         state = {"on": active}
 
         def show():
+            """Draw the check mark for the current state."""
             (mark.add_css_class if state["on"] else mark.remove_css_class)("checked")
             row.update_state([Gtk.AccessibleState.CHECKED], [state["on"]])
 
         def clicked(*_):
+            """Toggle, and show the new detail text if on_toggle returned one."""
             state["on"] = not state["on"]
             show()
             new_detail = on_toggle(state["on"])
@@ -161,6 +167,7 @@ class AppMenu(Gtk.Popover):
         GLib.idle_add(lambda: callback() and False)
 
     def open_page(self, title, build):
+        """Slide to a new page built by build(page), with a back row at the top."""
         page = MenuPage(self)
         back = Gtk.Button()
         back.add_css_class("flat")
@@ -185,6 +192,7 @@ class AppMenu(Gtk.Popover):
                          lambda: self.page.set_visible(self.stack.get_visible_child() is self.page) and False)
 
     def _back_to_main(self, animate: bool):
+        """Return to the main page and drop the submenu pages."""
         if not self._pages:
             return
         if not animate:

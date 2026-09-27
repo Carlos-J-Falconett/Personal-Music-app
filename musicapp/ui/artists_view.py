@@ -12,6 +12,7 @@ ROOT_TAG = "artists"
 
 
 class ArtistItem(GObject.Object):
+    """An artist and their tracks, for list models."""
     __gtype_name__ = "ArtistItem"
 
     def __init__(self, name: str, tracks: list):
@@ -21,6 +22,7 @@ class ArtistItem(GObject.Object):
 
 
 def back_button(label: str, on_click) -> Gtk.Button:
+    """A flat "‹ label" button at the top of a pushed page."""
     btn = Gtk.Button(halign=Gtk.Align.START, margin_start=12, margin_top=8)
     btn.set_child(Adw.ButtonContent(icon_name="go-previous-symbolic", label=label))
     btn.add_css_class("flat")
@@ -29,6 +31,7 @@ def back_button(label: str, on_click) -> Gtk.Button:
 
 
 def play_buttons(on_play, on_shuffle) -> Gtk.Box:
+    """The Play and Shuffle pills of a page header."""
     box = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
     play = Gtk.Button(child=Adw.ButtonContent(icon_name="media-playback-start-symbolic", label="Play"))
     play.add_css_class("suggested-action")
@@ -45,6 +48,7 @@ def play_buttons(on_play, on_shuffle) -> Gtk.Box:
 
 
 def grid_scroller(grid: Gtk.Widget) -> Gtk.ScrolledWindow:
+    """A vertical scroller around a card grid."""
     scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
     scroller.set_child(grid)
     return scroller
@@ -90,6 +94,7 @@ class ArtistsView(Adw.Bin):
     # ---- data ----
 
     def refresh(self):
+        """Reload the artist grid, and refresh (or leave) the pages opened from it."""
         artists = self.win.library.artists()
         self.store.splice(0, self.store.get_n_items(), [ArtistItem(n, t) for n, t in artists])
         self.count_label.set_text(f"{len(artists):,} artists")
@@ -105,6 +110,7 @@ class ArtistsView(Adw.Bin):
     # ---- navigation ----
 
     def show_artist(self, name: str):
+        """Show an artist's page."""
         visible = self.nav.get_visible_page()
         if isinstance(visible, ArtistPage) and visible.artist == name:
             return
@@ -112,11 +118,13 @@ class ArtistsView(Adw.Bin):
         self.nav.replace([root, ArtistPage(self, name)])
 
     def show_album(self, album: AlbumItem):
+        """Show an album's page, with its artist's page behind it."""
         root = self.nav.find_page(ROOT_TAG)
         artist_page = ArtistPage(self, album.artist)
         self.nav.replace([root, artist_page, AlbumPage(self, album.key)])
 
     def push_album(self, album: AlbumItem):
+        """Open an album from the artist page."""
         self.nav.push(AlbumPage(self, album.key))
 
 
@@ -174,10 +182,12 @@ class ArtistPage(Adw.NavigationPage):
 
     @staticmethod
     def _apply_compact(page, level):
+        """Phone-sized windows: a smaller avatar."""
         page.avatar.set_size(72 if level == 2 else 96)
         page.header.set_spacing(12 if level == 2 else 18)
 
     def refresh(self) -> bool:
+        """Reload the albums and summary. False if the artist has no songs any more."""
         albums = self.win.library.albums_for_artist(self.artist)
         if not albums:
             return False
@@ -189,11 +199,13 @@ class ArtistPage(Adw.NavigationPage):
                                f"{format_total(sum(t.duration for t in tracks))}")
 
         def apply(texture):
+            """Show the artist's picture (None falls back to initials)."""
             self.avatar.set_custom_image(texture)  # None falls back to initials
         self.win.art.request_artist(self.artist, tracks[0], 128, apply)
         return True
 
     def _play(self, shuffle):
+        """Play all of the artist's songs, in order or shuffled."""
         if shuffle:
             self.win.player.shuffle_play(self.tracks)
         else:
@@ -247,11 +259,13 @@ class AlbumPage(Adw.NavigationPage):
 
     @staticmethod
     def _apply_compact(page, level):
+        """Phone-sized windows: a smaller cover."""
         # Phone-sized: a smaller cover beside the details, so the songs keep room below.
         page.cover.set_size(96 if level == 2 else 160)
         page.header.set_spacing(14 if level == 2 else 20)
 
     def refresh(self) -> bool:
+        """Reload the songs and summary. False if the album is gone."""
         album = self.win.library.find_album(self.key)
         if album is None:
             return False
