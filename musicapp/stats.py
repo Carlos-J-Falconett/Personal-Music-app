@@ -10,6 +10,9 @@ ListeningRecorder follows the Player and writes one row per listening session to
   (4 minutes), whichever comes first.
 - Sessions shorter than MIN_SESSION_SECONDS aren't kept (skipping through songs).
 - The song in progress is saved every CHECKPOINT_SECONDS, so a crash loses little.
+- Nothing is saved for a song `skip` rejects when it would be saved: the app skips hidden artists
+  while in Black Hole mode (so switching mode mid-song takes effect at the next save).
+- Each session keeps the song's genre too, for the Genres ranking.
 
 The functions below turn the stored history into what the Stats page shows: period starts, streaks
 and formatted durations."""
@@ -44,10 +47,11 @@ class ListeningRecorder(GObject.Object):
 
     __gsignals__ = {"changed": (GObject.SignalFlags.RUN_FIRST, None, ())}
 
-    def __init__(self, db, player):
+    def __init__(self, db, player, skip=None):
         super().__init__()
         self.db = db
         self.player = player
+        self.skip = skip  # skip(track) -> True: don't record it (see the module docstring)
         self._session: _Session | None = None
         # Every relevant change goes through _sync, which compares the player with the session.
         player.connect("track-changed", lambda *_: self._sync())
@@ -89,16 +93,18 @@ class ListeningRecorder(GObject.Object):
             self._save(session)
 
     def _save(self, session: _Session):
-        """Write the session (if it's long enough, or already saved) and tell listeners."""
+        """Write the session (if it's long enough, or already saved, and not skipped) and tell listeners."""
         if session.play_id is None and session.listened < MIN_SESSION_SECONDS:
             return
         track = session.track
+        if self.skip is not None and self.skip(track):
+            return  # e.g. a hidden artist in Black Hole mode: an already saved session stops growing
         duration = track.duration or self.player.get_duration() or 0
         needed = min(duration / 2, PLAY_MAX_SECONDS) if duration > 0 else PLAY_MAX_SECONDS
         try:
             session.play_id = self.db.save_play(
                 session.play_id, session.started, round(session.listened, 1), session.listened >= needed,
-                track.id, track.title, track.artist_key, track.album)
+                track.id, track.title, track.artist_key, track.album, track.genre)
         except Exception as exc:  # e.g. the database closed during shutdown: never break playback
             print(f"[stats] could not save: {exc}")
             return

@@ -5,8 +5,10 @@ Top to bottom:
 - four cards for that period: time listened, plays, different songs, different artists;
 - a year of days as a heatmap (YearHeatmap), with a summary (days listened, current and longest
   streak), hover tooltips and arrows to move a year back or forward;
-- the most listened artists, albums or songs of the period. Clicking one opens the artist or album,
-  or plays the songs of the ranking from that one.
+- the most listened artists, albums, songs or genres of the period. Clicking one opens the artist,
+  album or genre, or plays the songs of the ranking from that one. Genres show a bar with their
+  share of the period's listening time, and its percentage. (In Black Hole mode, hidden artists
+  aren't recorded: see stats.py.)
 
 The page reads the database only while it's showing: when it appears, and when the recorder saves
 something meanwhile."""
@@ -19,10 +21,11 @@ import gi
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Adw, GLib, Gtk, PangoCairo  # noqa: E402
 
+from ..library import UNKNOWN_GENRE  # noqa: E402
 from ..stats import PERIODS, format_listened, period_start, streaks  # noqa: E402
 from .widgets import follow_compact  # noqa: E402
 
-RANKINGS = (("artists", "Artists"), ("albums", "Albums"), ("songs", "Songs"))
+RANKINGS = (("artists", "Artists"), ("albums", "Albums"), ("songs", "Songs"), ("genres", "Genres"))
 RANKING_SIZE = 50
 
 
@@ -92,6 +95,7 @@ class StatsView(Adw.Bin):
             self.heat_scroller.add_controller(controller)
         column.append(self.heat_scroller)
         self._years_back = 0  # 0 = the year up to today
+        self._period_seconds = 0.0  # time listened in the period: the Genres ranking's 100%
 
         # ---- ranking ----
         self.rankings = _toggles(RANKINGS, margin_top=8)
@@ -167,6 +171,7 @@ class StatsView(Adw.Bin):
     def _refresh_period(self):
         """The four numbers for the chosen period."""
         seconds, plays, songs, artists = self.db.play_totals(period_start(self._period_days()))
+        self._period_seconds = seconds
         values = {"listened": format_listened(seconds), "plays": f"{plays:,}",
                   "songs": f"{songs:,}", "artists": f"{artists:,}"}
         for key, label in self.card_values.items():
@@ -211,7 +216,7 @@ class StatsView(Adw.Bin):
         return False
 
     def _refresh_ranking(self):
-        """The top artists, albums or songs of the chosen period."""
+        """The top artists, albums, songs or genres of the chosen period."""
         kind = self.rankings.get_active_name() or "artists"
         rows = self.db.play_top(kind, period_start(self._period_days()), RANKING_SIZE)
         self.ranking.remove_all()
@@ -222,21 +227,31 @@ class StatsView(Adw.Bin):
         self.no_ranking.set_visible(not rows)
 
     def _rank_row(self, index: int, kind: str, row) -> Gtk.ListBoxRow:
-        """A ranking row: position, name (with the artist for albums and songs) and time listened."""
+        """A ranking row: position, name (with the artist for albums and songs, or a share bar for
+        genres) and time listened (with the share's percentage for genres)."""
         box = Gtk.Box(spacing=14)
         rank = Gtk.Label(label=str(index + 1), width_chars=3, xalign=0)
         rank.add_css_class("stats-rank")
         names = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
-        name = Gtk.Label(label={"artists": row["artist"], "albums": row["album"], "songs": row["title"]}[kind],
+        name = Gtk.Label(label={"artists": row["artist"], "albums": row["album"], "songs": row["title"],
+                                "genres": row["genre"] or UNKNOWN_GENRE}[kind],
                          xalign=0, ellipsize=3)
         name.add_css_class("stats-name")
         names.append(name)
-        if kind != "artists":
+        listened = format_listened(row["seconds"])
+        if kind == "genres":
+            # Its share of everything listened to in the period (play_totals' seconds).
+            share = min(1.0, row["seconds"] / self._period_seconds) if self._period_seconds > 0 else 0.0
+            bar = Gtk.ProgressBar(fraction=share)
+            bar.add_css_class("stats-genre-bar")
+            names.append(bar)
+            listened = f"{share:.0%} · {listened}"
+        elif kind != "artists":
             detail = Gtk.Label(label=row["artist"], xalign=0, ellipsize=3)
             detail.add_css_class("stats-detail")
             detail.add_css_class("caption")
             names.append(detail)
-        time_label = Gtk.Label(label=format_listened(row["seconds"]))
+        time_label = Gtk.Label(label=listened)
         time_label.add_css_class("stats-time")
         for widget in (rank, names, time_label):
             box.append(widget)
@@ -248,12 +263,17 @@ class StatsView(Adw.Bin):
         return item
 
     def _open(self, item):
-        """A ranking row was clicked: open the artist or album, or play the ranked songs from it."""
+        """A ranking row was clicked: open the artist, album or genre, or play the ranked songs from it."""
         kind, row = self._ranked[item._index]
         library = self.win.library
         if kind == "artists":
             if library.artist_tracks(row["artist"]):
                 self.win.show_artist(row["artist"])
+                return
+        elif kind == "genres":
+            genre = row["genre"] or UNKNOWN_GENRE
+            if library.genre_tracks(genre):
+                self.win.show_genre(genre)
                 return
         elif kind == "albums":
             if library.find_album((row["artist"], row["album"])) is not None:

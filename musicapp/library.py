@@ -23,6 +23,9 @@ def format_total(seconds: float) -> str:
     return f"{h} h {m} min"
 
 
+UNKNOWN_GENRE = "Unknown Genre"  # the Genres tab's group for songs without a genre tag
+
+
 def sort_key(item):
     """The library's natural order: artist, album, disc, track number, title."""
     return (item.artist_key.casefold(), item.album.casefold(), item.disc_no, item.track_no, item.title_key)
@@ -56,12 +59,19 @@ class TrackItem(GObject.Object):
         self.year = row["year"]
         self.duration_text = format_time(self.duration)
         self.title_key = self.title.casefold()  # for sorting
-        self.search_text = f"{self.title}\n{self.artist}\n{self.album}\n{self.album_artist}".casefold()
+        # Title, artists, album and genre: searching a genre finds its songs too.
+        self.search_text = (f"{self.title}\n{self.artist}\n{self.album}\n{self.album_artist}\n"
+                            f"{self.genre}").casefold()
 
     @property
     def artist_key(self) -> str:
         """Artist used for grouping in the Artists view."""
         return self.album_artist or self.artist
+
+    @property
+    def genre_key(self) -> str:
+        """Genre used for grouping in the Genres view (UNKNOWN_GENRE when the tag is empty)."""
+        return self.genre.strip() or UNKNOWN_GENRE
 
 
 class AlbumItem(GObject.Object):
@@ -97,7 +107,12 @@ def _group_albums(tracks: list[TrackItem]) -> list[AlbumItem]:
 
 class Library(GObject.Object):
     """The in-memory library: one TrackItem per track, the grouped artists and albums (cached until
-    the next reload), and favorites and playlists (stored in the database, changes announced by signals)."""
+    the next reload), and favorites and playlists (stored in the database, changes announced by signals).
+
+    Hidden artists (`hidden_artists`, artist_key names saved in the "hidden_artists" setting) are left
+    out of `visible_items`, the list All Songs shows and the library queue is built from, and out of
+    the Genres view (genres()). Their songs stay everywhere else (Artists, albums, playlists,
+    Favorites, Search)."""
     __gsignals__ = {
         # Tracks were added/removed/retagged.
         "changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
@@ -105,6 +120,8 @@ class Library(GObject.Object):
         "playlists-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
         # playlist id whose contents changed
         "playlist-contents-changed": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
+        # artist name that was hidden or shown again (see set_artist_hidden)
+        "hidden-artists-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
     def __init__(self, db: Database):
@@ -112,6 +129,8 @@ class Library(GObject.Object):
         self.db = db
         self.items: dict[int, TrackItem] = {}
         self.sorted_items: list[TrackItem] = []
+        self.visible_items: list[TrackItem] = []  # sorted_items without hidden artists' songs
+        self.hidden_artists: set[str] = set(db.get_setting("hidden_artists", []))
         self.reload(emit=False)
 
     def reload(self, emit=True):
@@ -132,6 +151,7 @@ class Library(GObject.Object):
             if item.favorite != want:
                 item.favorite = want
         self.sorted_items = sorted(self.items.values(), key=sort_key)
+        self._update_visible()
         self._albums = None
         self._artists = None
         if emit:
@@ -167,6 +187,55 @@ class Library(GObject.Object):
         """An artist's tracks in library order."""
         self.artists()
         return list(self._artist_index.get(name, []))
+
+    # ---- hidden artists ----
+
+    def is_hidden(self, name: str) -> bool:
+        """Whether this artist is hidden from All Songs and the library queue."""
+        return name in self.hidden_artists
+
+    def set_artist_hidden(self, name: str, hidden: bool):
+        """Hide an artist from All Songs and the library queue, or show them again (saved, and
+        announced with hidden-artists-changed)."""
+        if hidden == self.is_hidden(name):
+            return
+        if hidden:
+            self.hidden_artists.add(name)
+        else:
+            self.hidden_artists.discard(name)
+        self.db.set_setting("hidden_artists", sorted(self.hidden_artists))
+        self._update_visible()
+        self.emit("hidden-artists-changed", name)
+
+    def _update_visible(self):
+        """Rebuild visible_items: the library order, without hidden artists' songs."""
+        hidden = self.hidden_artists
+        self.visible_items = [t for t in self.sorted_items if t.artist_key not in hidden]
+        self._genres = None  # genres are built from visible_items
+
+    # ---- genres ----
+
+    def genres(self) -> list[tuple[str, list[TrackItem]]]:
+        """(genre, tracks) sorted by name, Unknown Genre last, without hidden artists' songs.
+        Cached until the next reload or hidden-artist change."""
+        if self._genres is None:
+            groups: dict[str, list[TrackItem]] = {}
+            for item in self.visible_items:
+                groups.setdefault(item.genre_key, []).append(item)
+            self._genres = sorted(groups.items(), key=lambda kv: (kv[0] == UNKNOWN_GENRE, kv[0].casefold()))
+            self._genre_index = dict(self._genres)
+            self._genre_folded = [name.casefold() for name, _tracks in self._genres]
+        return self._genres
+
+    def find_genres(self, terms: list[str]) -> list[tuple[str, list[TrackItem]]]:
+        """Genres whose name contains every (casefolded) term."""
+        genres = self.genres()
+        return [g for g, folded in zip(genres, self._genre_folded) if all(t in folded for t in terms)]
+
+    def genre_tracks(self, name: str) -> list[TrackItem]:
+        """A genre's tracks in library order (without hidden artists)."""
+        self.genres()
+        return list(self._genre_index.get(name, []))
 
     # ---- albums ----
 

@@ -14,17 +14,22 @@ class SongList(Gtk.Box):
     `win` is the main window, which provides .player, .library, .toast(), .show_artist()
     and .new_playlist_with(). Override hooks via constructor kwargs:
       playlist_id: enables "Remove from Playlist" in the context menu.
-      queue_from: a callable returning the songs to queue when one is double-clicked (it plays
-        from that song); by default the list itself. Search results use the All Songs tab.
+      queue_from: a callable taking the double-clicked song and returning (songs to queue, their
+        queue_source); it plays from that song. By default the list itself. Search results use the
+        window's library_queue (All Songs, or a hidden artist's own songs).
+      queue_source: passed to the player with this list's own queue ("library" for All Songs and
+        genre pages, so hiding an artist takes their songs out of it).
     """
 
     def __init__(self, win, *, title: str = "", empty_icon: str = "audio-x-generic-symbolic",
                  empty_title: str = "No Songs", empty_description: str = "",
-                 show_track_no: bool = False, show_header: bool = True, queue_from=None):
+                 show_track_no: bool = False, show_header: bool = True, queue_from=None,
+                 queue_source: str | None = None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.win = win
         self.playlist_id: int | None = None
         self.queue_from = queue_from
+        self.queue_source = queue_source
         self._menu_items: list[TrackItem] = []
         self._summary = ""
 
@@ -229,19 +234,20 @@ class SongList(Gtk.Box):
         """Play every shown song in order, or shuffled."""
         items = self.visible_items()
         if shuffle:
-            self.win.player.shuffle_play(items)
+            self.win.player.shuffle_play(items, self.queue_source)
         else:
             self.win.player.set_shuffle(False)
-            self.win.player.play_tracks(items, 0)
+            self.win.player.play_tracks(items, 0, self.queue_source)
 
     def _on_activate(self, _view, position):
         """A song was double-clicked (or activated): play the list from it, or with `queue_from`,
-        that list from this song."""
+        the list it gives for this song, from this song."""
         if self.queue_from is None:
-            self.win.player.play_tracks(self.visible_items(), position)
+            self.win.player.play_tracks(self.visible_items(), position, self.queue_source)
             return
-        item, queue = self.sort_model.get_item(position), self.queue_from()
-        self.win.player.play_tracks(queue, queue.index(item) if item in queue else 0)
+        item = self.sort_model.get_item(position)
+        queue, source = self.queue_from(item)
+        self.win.player.play_tracks(queue, queue.index(item) if item in queue else 0, source)
 
     # ---- context menu ----
 

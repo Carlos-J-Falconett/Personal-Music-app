@@ -4,9 +4,10 @@
 - backdrop           the full-window background: artist image or the Black Hole slideshow
 - song_list          the sortable song table used by every song page, with the song menu
 - artists_view       Artists tab: artist grid → albums → an album's songs
+- genres_view        Genres tab: genre grid → a genre's songs
 - playlists_view     Playlists tab: playlist list → a playlist's songs
 - search_view        search results
-- stats_view         Stats tab: period numbers, a year heatmap, top artists/albums/songs
+- stats_view         Stats tab: period numbers, a year heatmap, top artists/albums/songs/genres
 - now_playing        the Now Playing panel (docked, or window-filling on small windows)
 - player_controls    time bar, playback buttons, volume
 - queue_view         the queue (Now Playing + Up Next)
@@ -15,7 +16,7 @@
 - visualizer         the audio wave drawn from the spectrum
 - focus_view         the full-window focus view
 - flip_card          the two-sided flipping card used by the panel and focus view
-- cards, widgets     shared widgets (album/artist cards, cover art, hearts, layout helpers)
+- cards, widgets     shared widgets (album/artist/genre cards, cover art, hearts, layout helpers)
 - menus, dialogs     the app's popover menus, name prompts and confirmations
 - theme_dialog       the Themes dialog and editor
 - artist_image_dialog  choosing artist images (normal and Black Hole mode)

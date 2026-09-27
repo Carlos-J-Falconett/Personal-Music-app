@@ -1,10 +1,11 @@
-"""Global search across artists, albums and songs."""
+"""Global search across artists, albums, songs and genres (a genre's name also finds its songs)."""
 
 from gi.repository import Adw, Gio, Gtk
 
 from ..library import AlbumItem
 from .artists_view import ArtistItem, grid_scroller
-from .cards import AlbumCard, ArtistCard
+from .cards import AlbumCard, ArtistCard, GenreCard
+from .genres_view import GenreItem
 from .song_list import SongList
 from .widgets import NarrowColumn
 
@@ -25,8 +26,8 @@ def _matches(terms, text):
 
 
 class SearchView(Gtk.Box):
-    """Search results for artists, albums and songs, with All / Songs / Artists / Albums tabs; "All"
-    previews a few of each."""
+    """Search results for artists, albums, songs and genres, with All / Songs / Artists / Albums /
+    Genres tabs; "All" previews a few of each."""
 
     def __init__(self, win):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -35,11 +36,12 @@ class SearchView(Gtk.Box):
         self._artists: list[tuple[str, list]] = []
         self._albums: list[AlbumItem] = []
         self._songs: list = []
+        self._genres: list[tuple[str, list]] = []
 
         bar = Gtk.Box(margin_top=12, margin_bottom=6, margin_start=24, margin_end=24)
         self.toggles = Adw.ToggleGroup(halign=Gtk.Align.START)
         self.toggles.add_css_class("round")
-        for name in ("all", "songs", "artists", "albums"):
+        for name in ("all", "songs", "artists", "albums", "genres"):
             self.toggles.add(Adw.Toggle(name=name, label=name.title()))
         self.toggles.connect("notify::active-name", lambda *_: self._show_active())
         bar.append(self.toggles)
@@ -57,14 +59,16 @@ class SearchView(Gtk.Box):
 
         # Full lists
         # Playing a found song queues the whole library in All Songs order, as if it had been
-        # double-clicked on the All Songs tab (not just the search results).
-        self.songs = SongList(win, show_header=False, queue_from=lambda: win.songs_page.visible_items())
+        # double-clicked on the All Songs tab (not just the search results); a hidden artist's
+        # song queues that artist's songs instead (see the window's library_queue).
+        self.songs = SongList(win, show_header=False, queue_from=win.library_queue)
         self.stack.add_named(NarrowColumn(self.songs), "songs")
 
         self.artist_store = Gio.ListStore(item_type=ArtistItem)
         factory = Gtk.SignalListItemFactory()
         factory.connect("setup", lambda _f, li: li.set_child(ArtistCard(win.art)))
-        factory.connect("bind", lambda _f, li: li.get_child().set_artist(li.get_item().name, li.get_item().tracks))
+        factory.connect("bind", lambda _f, li: li.get_child().set_artist(
+            li.get_item().name, li.get_item().tracks, win.library.is_hidden(li.get_item().name)))
         artist_grid = Gtk.GridView(model=Gtk.NoSelection(model=self.artist_store), factory=factory,
                                    single_click_activate=True, max_columns=12)
         artist_grid.add_css_class("card-grid")
@@ -81,6 +85,17 @@ class SearchView(Gtk.Box):
         album_grid.connect("activate", lambda g, pos: win.show_album(self.album_store.get_item(pos).key))
         self.stack.add_named(_glass(grid_scroller(album_grid)), "albums")
 
+        # Genres (Library.genres: without hidden artists' songs, like the Genres tab)
+        self.genre_store = Gio.ListStore(item_type=GenreItem)
+        factory = Gtk.SignalListItemFactory()
+        factory.connect("setup", lambda _f, li: li.set_child(GenreCard(win.art)))
+        factory.connect("bind", lambda _f, li: li.get_child().set_genre(li.get_item().name, li.get_item().tracks))
+        genre_grid = Gtk.GridView(model=Gtk.NoSelection(model=self.genre_store), factory=factory,
+                                  single_click_activate=True, max_columns=12)
+        genre_grid.add_css_class("card-grid")
+        genre_grid.connect("activate", lambda g, pos: win.show_genre(self.genre_store.get_item(pos).name))
+        self.stack.add_named(_glass(grid_scroller(genre_grid)), "genres")
+
         self.no_results = Adw.StatusPage(icon_name="system-search-symbolic", title="No Results")
         self.stack.add_named(_glass(self.no_results), "none")
         self.append(self.stack)
@@ -95,11 +110,14 @@ class SearchView(Gtk.Box):
         self._artists = library.find_artists(terms)
         self._albums = [a for a in library.all_albums() if _matches(terms, a.search_text)]
         self._songs = [i for i in library.sorted_items if _matches(terms, i.search_text)]
+        self._genres = library.find_genres(terms)
 
         self.songs.set_items(self._songs)
         self.artist_store.splice(0, self.artist_store.get_n_items(), [ArtistItem(n, t) for n, t in self._artists])
         self.album_store.splice(0, self.album_store.get_n_items(), self._albums)
-        for name, items in (("songs", self._songs), ("artists", self._artists), ("albums", self._albums)):
+        self.genre_store.splice(0, self.genre_store.get_n_items(), [GenreItem(n, t) for n, t in self._genres])
+        for name, items in (("songs", self._songs), ("artists", self._artists), ("albums", self._albums),
+                            ("genres", self._genres)):
             self.toggles.get_toggle_by_name(name).set_label(f"{name.title()} · {len(items)}")
         self._build_overview()
         self._show_active()
@@ -115,7 +133,7 @@ class SearchView(Gtk.Box):
 
     def _show_active(self):
         """Show the chosen tab, or "No Results"."""
-        if not (self._artists or self._albums or self._songs):
+        if not (self._artists or self._albums or self._songs or self._genres):
             self.no_results.set_description(f"Nothing matches “{self._query}”")
             self.stack.set_visible_child_name("none")
             return
@@ -124,7 +142,7 @@ class SearchView(Gtk.Box):
     # ---- "All" overview ----
 
     def _build_overview(self):
-        """Build the All tab: a few artists, albums and songs, each with See All."""
+        """Build the All tab: a few artists, albums, genres and songs, each with See All."""
         while child := self.overview.get_first_child():
             self.overview.remove(child)
 
@@ -133,7 +151,7 @@ class SearchView(Gtk.Box):
             flow = self._flowbox()
             for name, tracks in self._artists[:PREVIEW_CARDS]:
                 card = ArtistCard(self.win.art)
-                card.set_artist(name, tracks)
+                card.set_artist(name, tracks, self.win.library.is_hidden(name))
                 flow.append(card)
             flow.connect("child-activated", lambda f, child: self.win.show_artist(child.get_child().name))
             self.overview.append(flow)
@@ -146,6 +164,16 @@ class SearchView(Gtk.Box):
                 card.set_album(album)
                 flow.append(card)
             flow.connect("child-activated", lambda f, child: self.win.show_album(child.get_child().album.key))
+            self.overview.append(flow)
+
+        if self._genres:
+            self._section("Genres", len(self._genres), "genres")
+            flow = self._flowbox()
+            for name, tracks in self._genres[:PREVIEW_CARDS]:
+                card = GenreCard(self.win.art)
+                card.set_genre(name, tracks)
+                flow.append(card)
+            flow.connect("child-activated", lambda f, child: self.win.show_genre(child.get_child().name))
             self.overview.append(flow)
 
         if self._songs:
@@ -165,9 +193,10 @@ class SearchView(Gtk.Box):
             self.overview.append(rows)
 
     def _play_from_library(self, item):
-        """Play the whole library in All Songs order, starting at this song (as the All Songs tab would)."""
-        queue = self.win.songs_page.visible_items()
-        self.win.player.play_tracks(queue, queue.index(item) if item in queue else 0)
+        """Play the whole library in All Songs order, starting at this song (as the All Songs tab would),
+        or, for a hidden artist's song, that artist's songs from it."""
+        queue, source = self.win.library_queue(item)
+        self.win.player.play_tracks(queue, queue.index(item) if item in queue else 0, source)
 
     def _section(self, title: str, count: int, target: str):
         """A section heading, with See All when there are more than the preview shows."""

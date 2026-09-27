@@ -17,14 +17,18 @@ translucent "glass" panels.
 ## Features
 
 - **Library** of every song under your music folder: All Songs, Artists (artist → albums → songs),
-  Favorites and Playlists tabs, plus search across artists, albums and songs.
+  Genres, Favorites and Playlists tabs, plus search across artists, albums, songs and genres.
+- **Genres tab:** your songs grouped by their genre tag, as a grid of genres (each with the cover
+  of its first song, and its song and artist counts). Open one for its songs, with Play and
+  Shuffle. Songs without a genre are under "Unknown Genre"; hidden artists are left out, as in
+  All Songs.
 - **Automatic updates:** the folder is watched, and new, changed or removed files show up by
   themselves. Only files that changed are re-read, so rescans are quick.
 - **Now Playing panel** with the cover, song details, an audio wave visualizer, a time bar,
   shuffle/repeat and volume. The cover card flips over to show the **lyrics** or the **equalizer**.
 - **Stats tab:** how much you've listened this week, month, year or all time (time, plays, songs,
-  artists), a year of days as a heatmap with your listening streaks, and your top artists, albums
-  and songs.
+  artists), a year of days as a heatmap with your listening streaks, and your top artists, albums,
+  songs and genres (with each genre's share of your listening time).
 - **Queue** ("Up Next"): play next, reorder by dragging, remove, clear. With Repeat Queue it shows
   what comes around again.
 - **Lyrics** from the song's tags, a `.lrc`/`.txt` file next to it, or [LRCLIB](https://lrclib.net).
@@ -34,6 +38,12 @@ translucent "glass" panels.
 - **Colour themes:** make your own from hex colours, for the basics or for any single element,
   with a live preview.
 - **Artist images:** choose your own picture for any artist.
+- **Hidden artists:** the eye button on an artist's page hides them from All Songs, the Genres
+  tab and the queues they build (including Play with nothing queued, e.g. from GNOME's media
+  controls). Hiding an artist also takes their upcoming songs out of an All Songs or genre queue,
+  while the playing song carries on. In Black Hole mode, their listening isn't recorded in Stats. They still play from their own page, their albums, playlists and Favorites, and
+  Search still finds them; clicking one of their songs there plays that artist's songs. Their
+  card in the Artists grid says "Hidden". Click the button again to bring them back.
 - **Adaptive layout:** from wide windows down to phone size.
 - **Desktop integration:** GNOME's media controls, the lock screen and media keys control the
   player (MPRIS). Closing the window keeps the music playing; Quit ends the app.
@@ -85,15 +95,20 @@ changed files are read.
   names are links. The queue, lyrics and equalizer buttons sit at the top of the panel; drag the
   panel's left edge to resize it.
 - **Search:** start typing anywhere, or press Ctrl+F. Every word must match. Results are split
-  into All / Songs / Artists / Albums. Playing a song you found queues your whole library in All
-  Songs order from that song, just as if you had double-clicked it on the All Songs tab.
+  into All / Songs / Artists / Albums / Genres. Typing a genre (say "rock") finds the matching
+  genres and their songs. Playing a song you found queues your whole library in All Songs order
+  from that song, just as if you had double-clicked it on the All Songs tab.
 - **Hide Interface** (Ctrl+H, or the switch in the main menu): everything under the top bar
-  disappears so only the background shows. Clicking a tab, or Ctrl+H again, brings it back.
-- **Stats:** the fifth tab. Pick Week / Month / Year / All time (the last 7, 30 or 365 days, or
+  disappears so only the background shows. Clicking a tab, or Ctrl+H again, brings it back. It
+  works in the focus view too (everything but the backdrop hides); there, click anywhere, press
+  Esc, or press Ctrl+H again to bring it back.
+- **Stats:** the sixth tab. Pick Week / Month / Year / All time (the last 7, 30 or 365 days, or
   everything) for the four numbers and the rankings. The heatmap shows a year of days, darker to
   brighter by how long you listened; hover a day to see its date, time and plays, and use ‹ / ›
   to see earlier years. Its summary gives the days listened that year, your current streak and
-  your longest. Click a ranked artist or album to open it, or a song to play the ranking from it.
+  your longest. The rankings are Artists / Albums / Songs / Genres; the Genres ranking shows a bar
+  and percentage for each genre's share of the period's listening time. Click a ranked artist,
+  album or genre to open it, or a song to play the ranking from it.
   Listening is recorded from the first launch of this version on; nothing before that is known.
 - **Main menu** (the Sun icon, top left): new playlist, rescan, Themes…, Artist Images…,
   keyboard shortcuts, About, Quit.
@@ -131,7 +146,7 @@ changed files are read.
 
 | What | Where |
 |---|---|
-| Library, favorites, playlists, per-song EQ, listening history, settings | `~/.local/share/musicappv5/library.db` (SQLite) |
+| Library, favorites, playlists, per-song EQ, listening history, settings (including hidden artists) | `~/.local/share/musicappv5/library.db` (SQLite) |
 | Cached online lyrics | `~/.local/share/musicappv5/lyrics/` |
 | Your artist images (copies) | `~/.local/share/musicappv5/artist-images/` |
 | Scaled covers and images (safe to delete) | `~/.cache/musicappv5/covers/` |
@@ -168,16 +183,18 @@ back), not while the app plays in the background. Unplayable files are skipped w
 
 **Listening history** (`stats.py`, `ui/stats_view.py`). `ListeningRecorder` follows the
 player and stores one row per listening session in the `plays` table. Each row keeps the title,
-artist and album, so the history survives rescans and deleted files.
+artist, album and genre, so the history survives rescans and deleted files. (Sessions saved before
+the genre was recorded got their song's genre filled in once, when this version first started.)
 - Only time actually playing counts; pauses and seeks don't.
 - A session counts as a play once half the song, or 4 minutes, has been heard.
 - Sessions under 5 seconds (skips) aren't kept.
 - Each loop of Repeat Current Song is a new session.
 - The song in progress is saved every 30 seconds and when the app quits.
+- In Black Hole mode, hidden artists' listening isn't recorded at all (normal mode records it).
 
 The Stats page reads the database only while it's showing. The heatmap is drawn with cairo in the
-theme's "Listening Days" colour; the Stats theme group also colours the number cards and empty
-days.
+theme's "Listening Days" colour; the Stats theme group also colours the number cards, empty
+days and the Genres ranking's bars ("Genre Bars").
 
 **Pictures** (`art.py`). Covers and artist images are scaled once on worker threads and cached on
 disk per size: 128 px thumbnails, 512 px large covers, and a full-window 2560 px image with a
@@ -227,7 +244,7 @@ mentions it.
 
 - **Artist images:** Artist Images… now edits a separate set of Black Hole images. An artist
   without one keeps their normal image.
-- **A sixth tab, Slideshows,** appears in the top bar (and as an icon on small windows) to manage
+- **A seventh tab, Slideshows,** appears in the top bar (and as an icon on small windows) to manage
   the background slideshows. It disappears again when you leave the mode.
 - **Main menu → Black Hole section:**
   - **Slideshow** on/off
@@ -235,6 +252,7 @@ mentions it.
   - **Repeat Current Slide**
   - **Exit Black Hole Mode**
 - The **Keyboard Shortcuts** window gets a "Black Hole Slideshows" section.
+- **Stats:** listening to a hidden artist isn't recorded while in Black Hole mode.
 
 #### Slideshows
 

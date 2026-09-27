@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS plays (
     track_id  INTEGER,
     title     TEXT NOT NULL,
     artist    TEXT NOT NULL,              -- the grouping artist (album artist, else artist)
-    album     TEXT NOT NULL
+    album     TEXT NOT NULL,
+    genre     TEXT NOT NULL DEFAULT ''    -- the song's genre tag ('' when it has none)
 );
 CREATE INDEX IF NOT EXISTS plays_started ON plays(started);
 """
@@ -88,7 +89,17 @@ class Database:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self):
+        """Bring databases made by older versions up to SCHEMA (each step runs only once)."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(plays)")}
+        if "genre" not in columns:
+            # Listening history gained the genre: fill it in from the songs still in the library.
+            self._conn.execute("ALTER TABLE plays ADD COLUMN genre TEXT NOT NULL DEFAULT ''")
+            self._conn.execute("UPDATE plays SET genre = COALESCE("
+                               "(SELECT genre FROM tracks WHERE tracks.id = plays.track_id), '')")
 
     def _query(self, sql, params=()):
         """Run a SELECT and return all rows."""
@@ -245,14 +256,14 @@ class Database:
     # ---- listening history (see stats.py) ------------------------------
 
     def save_play(self, play_id: int | None, started: float, listened: float, completed: bool,
-                  track_id: int, title: str, artist: str, album: str) -> int:
+                  track_id: int, title: str, artist: str, album: str, genre: str = "") -> int:
         """Insert a listening session (play_id None) or update its listened time and completion.
         Returns its id."""
         if play_id is None:
             return self._write(
-                "INSERT INTO plays (started, listened, completed, track_id, title, artist, album) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (started, listened, int(completed), track_id, title, artist, album)).lastrowid
+                "INSERT INTO plays (started, listened, completed, track_id, title, artist, album, genre) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (started, listened, int(completed), track_id, title, artist, album, genre)).lastrowid
         self._write("UPDATE plays SET listened = ?, completed = ? WHERE id = ?", (listened, int(completed), play_id))
         return play_id
 
@@ -265,13 +276,15 @@ class Database:
         return float(row[0]), int(row[1]), int(row[2]), int(row[3])
 
     def play_top(self, kind: str, since: float, limit: int):
-        """The most listened artists, albums or songs since a unix time, as rows of
-        (artist, album, title, track_id, seconds); album/title are '' and track_id NULL where they
-        don't apply (track_id: the song's latest id, to play it if it's still in the library)."""
-        columns = {"artists": "artist, '' AS album, '' AS title, NULL AS track_id",
-                   "albums": "artist, album, '' AS title, NULL AS track_id",
-                   "songs": "artist, MAX(album) AS album, title, MAX(track_id) AS track_id"}[kind]
-        group = {"artists": "artist", "albums": "artist, album", "songs": "title, artist"}[kind]
+        """The most listened artists, albums, songs or genres since a unix time, as rows of
+        (artist, album, title, genre, track_id, seconds); the columns that don't apply are '' (and
+        track_id NULL). track_id: the song's latest id, to play it if it's still in the library;
+        genre '' groups the songs without one."""
+        columns = {"artists": "artist, '' AS album, '' AS title, '' AS genre, NULL AS track_id",
+                   "albums": "artist, album, '' AS title, '' AS genre, NULL AS track_id",
+                   "songs": "artist, MAX(album) AS album, title, '' AS genre, MAX(track_id) AS track_id",
+                   "genres": "'' AS artist, '' AS album, '' AS title, genre, NULL AS track_id"}[kind]
+        group = {"artists": "artist", "albums": "artist, album", "songs": "title, artist", "genres": "genre"}[kind]
         return self._query(
             f"SELECT {columns}, SUM(listened) AS seconds FROM plays WHERE started >= ? "
             f"GROUP BY {group} ORDER BY seconds DESC LIMIT ?", (since, limit))

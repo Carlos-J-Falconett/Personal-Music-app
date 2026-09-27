@@ -15,6 +15,7 @@ from .menus import AppMenu, menu_header
 from .mode_icon import ModeIcon
 from .dialogs import ask_playlist_name, confirm_delete_playlist
 from .focus_view import FocusView
+from .genres_view import GenresView
 from .theme_dialog import ThemeDialog
 from .now_playing import NowPlayingPanel
 from .playlists_view import PlaylistsView
@@ -29,6 +30,7 @@ TABS = ("songs", "artists", "favorites", "playlists", "stats", "slideshows")
 # Icon-only top bar buttons on small windows: the tabs, then Now Playing.
 TAB_ICONS = (("songs", "audio-x-generic-symbolic", "All Songs"),
              ("artists", "avatar-default-symbolic", "Artists"),
+             ("genres", "musicapp-genre-symbolic", "Genres"),
              ("favorites", "musicapp-heart-filled-symbolic", "Favorites"),
              ("playlists", "musicapp-playlist-symbolic", "Playlists"),
              ("stats", "musicapp-stats-symbolic", "Stats"),
@@ -107,8 +109,10 @@ class MainWindow(Adw.ApplicationWindow):
         # Tab pages
         self.songs_page = SongList(self, title="All Songs", empty_icon="folder-music-symbolic",
                                    empty_title="No Music Found",
-                                   empty_description=f"Add songs to {self.app.music_dir} and they'll appear here")
+                                   empty_description=f"Add songs to {self.app.music_dir} and they'll appear here",
+                                   queue_source="library")  # hiding an artist takes them out of its queue
         self.artists_page = ArtistsView(self)
+        self.genres_page = GenresView(self)  # songs grouped by genre, without hidden artists
         self.favorites_page = SongList(self, title="Favorites", empty_icon="musicapp-heart-outline-symbolic",
                                        empty_title="No Favorites Yet",
                                        empty_description="Click the heart next to any song to add it here")
@@ -118,6 +122,7 @@ class MainWindow(Adw.ApplicationWindow):
         # Song lists are narrow columns; the space beside them stays empty (backdrop shows).
         self.view_stack.add_titled_with_icon(NarrowColumn(self.songs_page), "songs", "All Songs", "audio-x-generic-symbolic")
         self.view_stack.add_titled_with_icon(self.artists_page, "artists", "Artists", "avatar-default-symbolic")
+        self.view_stack.add_titled_with_icon(self.genres_page, "genres", "Genres", "musicapp-genre-symbolic")
         self.view_stack.add_titled_with_icon(NarrowColumn(self.favorites_page), "favorites", "Favorites",
                                              "musicapp-heart-filled-symbolic")
         self.view_stack.add_titled_with_icon(self.playlists_page, "playlists", "Playlists",
@@ -158,7 +163,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Top bar
         header = Adw.HeaderBar()
-        self.search_entry = Gtk.SearchEntry(placeholder_text="Search artists, albums, songs",
+        self.search_entry = Gtk.SearchEntry(placeholder_text="Search artists, albums, songs, genres",
                                             valign=Gtk.Align.CENTER, width_request=260)
         self.search_entry.connect("search-changed", self._on_search_changed)
         self.search_entry.connect("stop-search", lambda *_: self._clear_search())
@@ -521,9 +526,11 @@ class MainWindow(Adw.ApplicationWindow):
         return self.ui_stack.get_visible_child_name() == "hidden"
 
     def set_ui_hidden(self, hidden: bool):
-        """Hide everything under the top bar, or bring it back. Using the tabs also brings it back."""
+        """Hide everything under the top bar, and everything in the focus view, or bring it back.
+        Using the tabs also brings it back; in the focus view so do a click anywhere and Esc."""
         if hidden != self.ui_hidden:
             self.ui_stack.set_visible_child_name("hidden" if hidden else "ui")
+            self.focus_view.set_hidden(hidden)
 
     def show_ui(self):
         """Bring a hidden interface back."""
@@ -603,7 +610,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_key_pressed(self, _ctrl, keyval, _code, state):
         """Window-wide keys, before any widget sees them: Black Hole slideshow keys, space for
-        play/pause (unless typing), Escape to leave the focus view or clear the search."""
+        play/pause (unless typing), Escape to leave the focus view (after bringing back a hidden
+        interface and closing an open popup) or clear the search."""
         mods = state & Gtk.accelerator_get_default_mod_mask()
         if self.art.turned and self._slideshow_key(keyval, mods):
             return True
@@ -613,8 +621,10 @@ class MainWindow(Adw.ApplicationWindow):
             self.player.play_pause()
             return True
         if keyval == Gdk.KEY_Escape and self.focus_mode and not mods:
-            # First close an open popup, then leave the focus view.
-            if not self.focus_view.close_popup():
+            # First bring back a hidden interface, then close an open popup, then leave the focus view.
+            if self.ui_hidden:
+                self.show_ui()
+            elif not self.focus_view.close_popup():
                 self.set_focus_mode(False)
             return True
         if keyval == Gdk.KEY_Escape and self.search_entry.get_text():
@@ -674,6 +684,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.artists_page.show_artist(name)
         self._hide_overlay_panel()
 
+    def show_genre(self, name: str):
+        """Go to a genre's page."""
+        self.show_ui()
+        self._clear_search()
+        self.view_stack.set_visible_child_name("genres")
+        self.genres_page.show_genre(name)
+        self._hide_overlay_panel()
+
     def show_album(self, key):
         """Go to an album's page (key: (artist, album title))."""
         self.show_ui()
@@ -700,17 +718,40 @@ class MainWindow(Adw.ApplicationWindow):
         self.library.connect("favorites-changed", lambda *_: self._refresh_favorites())
         # Adding or removing songs also emits playlists-changed, so this covers contents too.
         self.library.connect("playlists-changed", lambda *_: self.playlists_page.refresh())
+        self.library.connect("hidden-artists-changed", self._on_artist_hidden)
         self.player.connect("error", lambda _p, msg: self.toast(msg))
         self.art.artist_listeners.append(self._on_artist_image_changed)
 
     def refresh_all(self):
         """Reload every page after the library changed, and drop deleted songs from the queue."""
-        self.songs_page.set_items(self.library.sorted_items)
+        self.songs_page.set_items(self.library.visible_items)  # without hidden artists
         self.artists_page.refresh()
+        self.genres_page.refresh()
         self._refresh_favorites()
         self.playlists_page.refresh()
         self.search_view.refresh()
         self.player.remove_tracks(lambda t: t.id not in self.library.items)
+
+    def _on_artist_hidden(self, _library, name):
+        """An artist was hidden or shown again: refresh All Songs, Genres and the artist cards and page.
+        Hidden: their upcoming songs leave a library (All Songs) queue; the current song keeps
+        playing, and queues from their page, an album or a playlist are left alone."""
+        self.songs_page.set_items(self.library.visible_items)
+        self.artists_page.refresh()
+        self.genres_page.refresh()
+        self.search_view.refresh()
+        hidden = self.library.is_hidden(name)
+        if hidden and self.player.queue_source == "library":
+            current = self.player.current
+            self.player.remove_tracks(lambda t: t.artist_key == name and t is not current)
+        self.toast(f"“{name}” hidden from All Songs" if hidden else f"“{name}” shown in All Songs")
+
+    def library_queue(self, item):
+        """(queue, queue_source) for playing `item` from the library (search results): All Songs in
+        its order, or, for a hidden artist's song (not in All Songs), that artist's songs."""
+        if self.library.is_hidden(item.artist_key):
+            return self.library.artist_tracks(item.artist_key), None
+        return self.songs_page.visible_items(), "library"
 
     def _refresh_favorites(self):
         """Reload the Favorites page."""

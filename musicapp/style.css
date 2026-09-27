@@ -105,6 +105,7 @@ window.main-window {
   --stats-numbers-color: var(--text);
   --stats-heatmap-color: var(--accent-bg-color);  /* the heatmap is drawn in code: see themes.color */
   --stats-empty-day-color: alpha(var(--text), 0.12);
+  --stats-genre-bar-color: var(--accent-bg-color);
   /* Derived tones. */
   --surface: alpha(var(--panel-color), 0.74);
   --surface-strong: alpha(var(--panel-color), 0.86);
@@ -1349,4 +1350,18 @@ window.main-window.phone .stats-card-value {
 }
 .stats-name {
   font-weight: 600;
+}
+/* Genres ranking: each genre's share of the period's listening, as a slim rounded bar. */
+.stats-genre-bar {
+  margin-top: 6px;
+}
+.stats-genre-bar trough {
+  min-height: 6px;
+  border-radius: 3px;
+  background-color: alpha(var(--text), 0.1);
+}
+.stats-genre-bar progress {
+  min-height: 6px;
+  border-radius: 3px;
+  background-color: var(--stats-genre-bar-color);
 }

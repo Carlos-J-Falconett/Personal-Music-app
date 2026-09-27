@@ -98,8 +98,11 @@ class MusicApp(Adw.Application):
         self.art = ArtCache()
         self.lyrics = LyricsService()
         self.player = Player()
-        self.stats = ListeningRecorder(self.db, self.player)  # listening history for the Stats tab
-        self.player.default_tracks = lambda: self.library.sorted_items
+        # Listening history for the Stats tab; in Black Hole mode, hidden artists aren't recorded.
+        self.stats = ListeningRecorder(self.db, self.player,
+                                       skip=lambda t: self.art.turned and self.library.is_hidden(t.artist_key))
+        # Nothing queued yet: Play plays All Songs (so without hidden artists).
+        self.player.default_tracks = lambda: self.library.visible_items
         self.player.eq_lookup = lambda track: self.db.get_track_eq(track.id)
         self.scanner = Scanner(self.db, self.music_dir)
         self.watcher = LibraryWatcher(self.scanner, self.music_dir)

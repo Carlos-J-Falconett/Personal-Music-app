@@ -1,6 +1,8 @@
 """Focus view: the whole window becomes Now Playing. The artist backdrop fills the background,
 the song and its controls sit centred at the bottom, and the Queue / Lyrics / Equalizer buttons
-on the right pop their panel out (one at a time; clicking the open one again hides it)."""
+on the right pop their panel out (one at a time; clicking the open one again hides it).
+Hide Interface (Ctrl+H) hides all of it too, leaving only the backdrop; a click anywhere, Esc or
+Ctrl+H brings it back."""
 
 import gi
 
@@ -59,7 +61,8 @@ class PopupArea(Gtk.Widget):
 
 class FocusView(Gtk.Overlay):
     """The focus view (see the module docstring): exit button, the song with its controls, and the Queue /
-    Lyrics / Equalizer buttons whose popup card flips between pages."""
+    Lyrics / Equalizer buttons whose popup card flips between pages. All of it sits on the "ui" page of
+    ui_stack; the empty "hidden" page is shown while the interface is hidden (see set_hidden)."""
 
     def __init__(self, win):
         super().__init__()
@@ -68,9 +71,12 @@ class FocusView(Gtk.Overlay):
         self.player = win.player
         self._popup: str | None = None
 
+        # Everything the view shows is layered on `ui` (the shade, then the controls on top), so
+        # Hide Interface can swap it all out for an empty page and leave just the backdrop.
+        ui = Gtk.Overlay()
         veil = Gtk.Box(hexpand=True, vexpand=True)
         veil.add_css_class("focus-veil")
-        self.set_child(veil)
+        ui.set_child(veil)
 
         # ---- exit (top left) ----
         exit_button = Gtk.Button(icon_name="view-restore-symbolic", tooltip_text="Exit Focus (Esc)",
@@ -78,7 +84,7 @@ class FocusView(Gtk.Overlay):
         exit_button.add_css_class("circular")
         exit_button.add_css_class("focus-chip")
         exit_button.connect("clicked", lambda *_: win.set_focus_mode(False))
-        self.add_overlay(exit_button)
+        ui.add_overlay(exit_button)
 
         # ---- song + controls (bottom centre) ----
         # Up to CONTENT_WIDTH wide, narrower in a narrow window; in a short one it stays below the
@@ -113,7 +119,7 @@ class FocusView(Gtk.Overlay):
         bottom.append(self.visualizer)
         self.controls = PlayerControls(win)
         bottom.append(self.controls)
-        self.add_overlay(Adw.Clamp(child=bottom, maximum_size=CONTENT_WIDTH, tightening_threshold=CONTENT_WIDTH,
+        ui.add_overlay(Adw.Clamp(child=bottom, maximum_size=CONTENT_WIDTH, tightening_threshold=CONTENT_WIDTH,
                                    valign=Gtk.Align.END, margin_top=PHONE_TOP, margin_bottom=28,
                                    margin_start=16, margin_end=16))
 
@@ -132,7 +138,7 @@ class FocusView(Gtk.Overlay):
             chips.append(button)
             self.buttons[name] = button
         self.buttons["eq"].set_visible(self.player.has_eq)
-        self.add_overlay(chips)
+        ui.add_overlay(chips)
         self._phone = False
 
         # ---- the popup card, just left of the buttons (below them on phone-sized windows) ----
@@ -159,8 +165,18 @@ class FocusView(Gtk.Overlay):
             getattr(self.flip, f"set_margin_{side}")(FLIP_ROOM)
         self.revealer = Gtk.Revealer(child=self.flip, reveal_child=False, transition_duration=220,
                                      transition_type=Gtk.RevealerTransitionType.SLIDE_LEFT)
-        self.add_overlay(PopupArea(self.revealer, self._place_popup))
+        ui.add_overlay(PopupArea(self.revealer, self._place_popup))
         follow_compact(win, self, FocusView._apply_compact)
+
+        # ---- Hide Interface: the "ui" page, or an empty one that brings it back when clicked ----
+        hidden = Gtk.Box(hexpand=True, vexpand=True)
+        click = Gtk.GestureClick()
+        click.connect("pressed", lambda *_: win.show_ui())
+        hidden.add_controller(click)
+        self.ui_stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=250)
+        self.ui_stack.add_named(ui, "ui")
+        self.ui_stack.add_named(hidden, "hidden")
+        self.set_child(self.ui_stack)
 
         self.player.connect("track-changed", lambda *_: self._sync())
         self._sync()
@@ -191,6 +207,13 @@ class FocusView(Gtk.Overlay):
             w = min(POPUP_WIDTH, right - EDGE)
         h = min(POPUP_HEIGHT, height - top - EDGE)
         return right - w, top, w, h
+
+    # ---- Hide Interface ----
+
+    def set_hidden(self, hidden: bool):
+        """Hide everything (leaving only the backdrop), or bring it back. Called by the window's
+        set_ui_hidden, so the focus view and the normal layout always hide together."""
+        self.ui_stack.set_visible_child_name("hidden" if hidden else "ui")
 
     # ---- popups ----
 

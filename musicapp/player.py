@@ -38,6 +38,9 @@ class Player(GObject.Object):
     `_order` holds indices into `_tracks` in play order, and `_pos` is the
     current index into `_order`. Shuffling only rearranges `_order`, so turning
     shuffle off restores the original order at the current track.
+    `queue_source` is "library" when hidden artists are kept out of the queue (All Songs or a
+    genre), so hiding an artist takes their songs out of it; otherwise None (an artist, album,
+    playlist, ...).
     """
 
     __gsignals__ = {
@@ -85,6 +88,7 @@ class Player(GObject.Object):
         self._tracks: list = []
         self._order: list[int] = []
         self._pos = -1
+        self.queue_source: str | None = None  # see the class docstring
         self._shuffle = False
         self._repeat = Repeat.OFF
         self._volume = 1.0
@@ -166,10 +170,12 @@ class Player(GObject.Object):
 
     # ---- queue management -------------------------------------------------------
 
-    def play_tracks(self, tracks: list, start: int = 0):
-        """Replace the queue with `tracks` and start playing tracks[start]."""
+    def play_tracks(self, tracks: list, start: int = 0, source: str | None = None):
+        """Replace the queue with `tracks` and start playing tracks[start]. `source` says where the
+        queue came from: "library" for All Songs or a genre (see queue_source), otherwise None."""
         if not tracks:
             return
+        self.queue_source = source
         start = max(0, min(start, len(tracks) - 1))
         self._tracks = list(tracks)
         self._order = list(range(len(tracks)))
@@ -179,14 +185,14 @@ class Player(GObject.Object):
         self.emit("queue-changed")
         self._load_current(play=True)
 
-    def shuffle_play(self, tracks: list):
-        """Turn shuffle on and play `tracks` from a random one."""
+    def shuffle_play(self, tracks: list, source: str | None = None):
+        """Turn shuffle on and play `tracks` from a random one (`source` as in play_tracks)."""
         if not tracks:
             return
         if not self._shuffle:
             self._shuffle = True
             self.emit("modes-changed")
-        self.play_tracks(tracks, random.randrange(len(tracks)))
+        self.play_tracks(tracks, random.randrange(len(tracks)), source)
 
     def play_next(self, tracks: list):
         """Insert tracks right after the current one."""
@@ -360,10 +366,11 @@ class Player(GObject.Object):
     def play(self):
         """Play or resume; with nothing queued, play the whole library."""
         if self.current is None:
-            # Nothing queued (e.g. first launch, or Play from GNOME's media controls): play everything.
+            # Nothing queued (e.g. first launch, or Play from GNOME's media controls): play everything
+            # (All Songs, so without hidden artists).
             tracks = self.default_tracks() if self.default_tracks else []
             if tracks:
-                self.play_tracks(tracks, 0)
+                self.play_tracks(tracks, 0, source="library")
             return
         if not self._loaded:
             self._load_current(play=True)

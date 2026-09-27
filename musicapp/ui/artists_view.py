@@ -66,7 +66,8 @@ class ArtistsView(Adw.Bin):
         self.store = Gio.ListStore(item_type=ArtistItem)
         factory = Gtk.SignalListItemFactory()
         factory.connect("setup", lambda _f, li: li.set_child(ArtistCard(win.art)))
-        factory.connect("bind", lambda _f, li: li.get_child().set_artist(li.get_item().name, li.get_item().tracks))
+        factory.connect("bind", lambda _f, li: li.get_child().set_artist(
+            li.get_item().name, li.get_item().tracks, win.library.is_hidden(li.get_item().name)))
         grid = Gtk.GridView(model=Gtk.NoSelection(model=self.store), factory=factory,
                             single_click_activate=True, max_columns=12, min_columns=2)
         grid.add_css_class("card-grid")
@@ -129,7 +130,8 @@ class ArtistsView(Adw.Bin):
 
 
 class ArtistPage(Adw.NavigationPage):
-    """An artist's albums."""
+    """An artist's albums, with Play / Shuffle, Change Artist Image, and the Hide toggle that keeps
+    their songs out of All Songs and the library queue (they still play from here and playlists)."""
 
     def __init__(self, view: ArtistsView, artist: str):
         super().__init__(title=artist, tag=f"artist:{artist}")
@@ -157,6 +159,13 @@ class ArtistPage(Adw.NavigationPage):
         edit.add_css_class("flat")
         edit.add_css_class("circular")
         edit.connect("clicked", lambda *_: self.win.show_artist_images(artist))
+        # Hide from All Songs and the library queue (Library.set_artist_hidden); refresh() keeps
+        # the toggle in step when it changes.
+        self.hide_toggle = Gtk.ToggleButton(icon_name="view-conceal-symbolic", valign=Gtk.Align.START)
+        self.hide_toggle.add_css_class("flat")
+        self.hide_toggle.add_css_class("circular")
+        self.hide_toggle.connect("toggled", lambda b: self.win.library.set_artist_hidden(artist, b.get_active()))
+        header.append(self.hide_toggle)
         header.append(edit)
         self.buttons = play_buttons(lambda: self._play(False), lambda: self._play(True))
         self.buttons.set_halign(Gtk.Align.START)
@@ -194,9 +203,15 @@ class ArtistPage(Adw.NavigationPage):
         self.store.splice(0, self.store.get_n_items(), albums)
         tracks = [t for a in albums for t in a.tracks]
         self.tracks = tracks
-        self.subtitle.set_text(f"{len(albums)} album{'s' if len(albums) != 1 else ''} · "
-                               f"{len(tracks)} song{'s' if len(tracks) != 1 else ''} · "
-                               f"{format_total(sum(t.duration for t in tracks))}")
+        hidden = self.win.library.is_hidden(self.artist)
+        summary = (f"{len(albums)} album{'s' if len(albums) != 1 else ''} · "
+                   f"{len(tracks)} song{'s' if len(tracks) != 1 else ''} · "
+                   f"{format_total(sum(t.duration for t in tracks))}")
+        self.subtitle.set_text(f"{summary} · Hidden from All Songs" if hidden else summary)
+        # Setting the same state doesn't emit "toggled", so this never re-hides or re-shows.
+        self.hide_toggle.set_active(hidden)
+        self.hide_toggle.set_tooltip_text("Show in All Songs and Queue" if hidden
+                                          else "Hide from All Songs and Queue")
 
         def apply(texture):
             """Show the artist's picture (None falls back to initials)."""

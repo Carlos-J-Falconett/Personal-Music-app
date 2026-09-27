@@ -147,6 +147,7 @@ GROUPS = [
         ("stats_numbers", "Numbers", "The big numbers on those cards", "text", 1),
         ("stats_heatmap", "Listening Days", "The heatmap's squares for days with listening", "accent", 1),
         ("stats_empty_day", "Empty Days", "The heatmap's squares for days without listening", "text", 0.12),
+        ("stats_genre_bar", "Genre Bars", "The bars of the Genres ranking", "accent", 1),
     ]),
     ("Other", [
         ("resize_handle", "Resize Handle", "The line shown when resizing the Now Playing panel", "accent_light", 1),

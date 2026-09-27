@@ -1,4 +1,4 @@
-"""Artist and album cards, shared by the Artists pages and search results."""
+"""Artist, album and genre cards, shared by the Artists and Genres pages and search results."""
 
 from gi.repository import Adw, Gtk
 
@@ -40,7 +40,7 @@ class AlbumCard(Gtk.Box):
 
 
 class ArtistCard(Gtk.Box):
-    """An artist in a grid: round picture, name and song count."""
+    """An artist in a grid: round picture, name and song count ("· Hidden" when hidden from All Songs)."""
 
     def __init__(self, art):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6, halign=Gtk.Align.CENTER)
@@ -56,15 +56,17 @@ class ArtistCard(Gtk.Box):
         for w in (self.avatar, self.label, self.count):
             self.append(w)
 
-    def set_artist(self, name: str, tracks: list):
-        """Show an artist (cards are reused as the grid scrolls)."""
+    def set_artist(self, name: str, tracks: list, hidden: bool = False):
+        """Show an artist (cards are reused as the grid scrolls). `hidden`: the artist is hidden from
+        All Songs and the library queue (Library.set_artist_hidden)."""
         self.name = name
         self.avatar.set_text(name)
         self.avatar.set_custom_image(None)
         self.label.set_text(name)
         self.label.set_tooltip_text(name)
         n = len(tracks)
-        self.count.set_text(f"{n} song{'s' if n != 1 else ''}")
+        count = f"{n} song{'s' if n != 1 else ''}"
+        self.count.set_text(f"{count} · Hidden" if hidden else count)
 
         def apply(texture, token=name):
             """Show the picture, unless the card now shows another artist."""
@@ -72,6 +74,34 @@ class ArtistCard(Gtk.Box):
                 self.avatar.set_custom_image(texture)
 
         self.art.request_artist(name, tracks[0] if tracks else None, THUMB, apply)
+
+
+class GenreCard(Gtk.Box):
+    """A genre in a grid: the cover of its first song, its name, and its song and artist counts."""
+
+    def __init__(self, art):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4, halign=Gtk.Align.CENTER)
+        self.add_css_class("album-card")
+        self.name = None
+        self.cover = CoverArt(art, ALBUM_COVER_SIZE, art_size=THUMB)
+        self.cover.set_margin_bottom(4)
+        self.title = Gtk.Label(xalign=0, ellipsize=3, max_width_chars=18, width_chars=18)
+        self.title.add_css_class("album-title")
+        self.subtitle = Gtk.Label(xalign=0, ellipsize=3, max_width_chars=18, width_chars=18)
+        self.subtitle.add_css_class("dim")
+        self.subtitle.add_css_class("caption")
+        self.subtitle.add_css_class("card-detail")
+        for w in (self.cover, self.title, self.subtitle):
+            self.append(w)
+
+    def set_genre(self, name: str, tracks: list):
+        """Show a genre (cards are reused as the grid scrolls)."""
+        self.name = name
+        self.cover.set_track(tracks[0] if tracks else None)
+        self.title.set_text(name)
+        self.set_tooltip_text(name)
+        n, artists = len(tracks), len({t.artist_key for t in tracks})
+        self.subtitle.set_text(f"{n} song{'s' if n != 1 else ''} · {artists} artist{'s' if artists != 1 else ''}")
 
 
 def card_button(card: Gtk.Widget, on_click) -> Gtk.Button:
