@@ -56,7 +56,9 @@ class SearchView(Gtk.Box):
         self.stack.add_named(overview_scroller, "all")
 
         # Full lists
-        self.songs = SongList(win, show_header=False)
+        # Playing a found song queues the whole library in All Songs order, as if it had been
+        # double-clicked on the All Songs tab (not just the search results).
+        self.songs = SongList(win, show_header=False, queue_from=lambda: win.songs_page.visible_items())
         self.stack.add_named(NarrowColumn(self.songs), "songs")
 
         self.artist_store = Gio.ListStore(item_type=ArtistItem)
@@ -158,9 +160,14 @@ class SearchView(Gtk.Box):
                 duration = Gtk.Label(label=item.duration_text)
                 duration.add_css_class("number-cell")
                 row.add_suffix(duration)
-                row.connect("activated", lambda _r, i=index: self.win.player.play_tracks(self._songs, i))
+                row.connect("activated", lambda _r, it=item: self._play_from_library(it))
                 rows.append(row)
             self.overview.append(rows)
+
+    def _play_from_library(self, item):
+        """Play the whole library in All Songs order, starting at this song (as the All Songs tab would)."""
+        queue = self.win.songs_page.visible_items()
+        self.win.player.play_tracks(queue, queue.index(item) if item in queue else 0)
 
     def _section(self, title: str, count: int, target: str):
         """A section heading, with See All when there are more than the preview shows."""

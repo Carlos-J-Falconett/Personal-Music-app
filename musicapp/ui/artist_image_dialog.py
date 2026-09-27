@@ -1,18 +1,16 @@
 """Dialog for choosing a custom picture for any artist. In Black Hole mode it manages
-the separate set of Black Hole images (artists without one keep showing their normal image)
-and the background slideshow, which replaces artist images while Black Hole mode is on."""
+the separate set of Black Hole images (artists without one keep showing their normal image).
+Black Hole mode's background slideshows have their own tab (slideshows_view.py)."""
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from ..art import THUMB
 from .artists_view import ArtistItem
-from .slideshow_pages import SlideshowsPage, _Page
 
 
 class ArtistImageDialog(Adw.Dialog):
     """The Artist Images dialog: a searchable list of artists, each opening a page to choose or reset
-    their picture. In Black Hole mode it edits the Black Hole images instead and adds the Background
-    Slideshow entry (pages in slideshow_pages.py)."""
+    their picture. In Black Hole mode it edits the Black Hole images instead."""
 
     def __init__(self, win, artist: str | None = None):
         super().__init__(title="Artist Images", content_width=440, content_height=620)
@@ -43,22 +41,6 @@ class ArtistImageDialog(Adw.Dialog):
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(Adw.HeaderBar(title_widget=self.list_title))
         toolbar.add_top_bar(search)
-        # Black Hole mode only: the background slideshow.
-        self.slideshow_row = Adw.ActionRow(title="Background Slideshow", activatable=True)
-        self.slideshow_row.add_css_class("slideshow-card")
-        tile = Gtk.Box(valign=Gtk.Align.CENTER, hexpand=False)
-        tile.add_css_class("icon-tile")
-        tile.append(Gtk.Image(icon_name="image-x-generic-symbolic", hexpand=True))
-        self.slideshow_row.add_prefix(tile)
-        self.slideshow_row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
-        self.slideshow_row.connect("activated", lambda *_: self.show_slideshow())
-        slideshow_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE,
-                                     margin_start=12, margin_end=12, margin_bottom=8)
-        slideshow_list.add_css_class("boxed-list")
-        slideshow_list.add_css_class("slideshow-entry")
-        slideshow_list.append(self.slideshow_row)
-        self.slideshow_entry = slideshow_list
-        toolbar.add_top_bar(slideshow_list)
         toolbar.set_content(Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, child=listview, vexpand=True))
         self.list_page = Adw.NavigationPage(title="Artist Images", tag="list", child=toolbar)
         self.nav.add(self.list_page)
@@ -66,49 +48,21 @@ class ArtistImageDialog(Adw.Dialog):
         self._sync_mode()
 
         self._listener = self._on_artist_changed
-        self._slides_listener = self._sync_slideshow_row
         self.art.artist_listeners.append(self._listener)
-        self.art.slideshow_listeners.append(self._slides_listener)
         self.connect("closed", lambda *_: self._on_closed())
-        self.nav.connect("popped", lambda _nav, page: page.detach() if isinstance(page, _Page) else None)
 
         if artist:
             self.show_artist(artist, animate=False)
 
     def _sync_mode(self):
-        """Show whether the dialog edits Black Hole images, and hide the slideshow outside that mode."""
+        """Show whether the dialog edits Black Hole images."""
         turned = self.art.turned
         self.list_title.set_subtitle("Black Hole mode" if turned else "")
         (self.add_css_class if turned else self.remove_css_class)("black-hole-mode")
-        self.slideshow_entry.set_visible(turned)
-        self._sync_slideshow_row()
-        if not turned and self.nav.find_page("slideshow") is not None:
-            self.nav.pop_to_page(self.list_page)  # the slideshow is a Black Hole mode option
 
     def _on_closed(self):
-        """Stop listening for changes (this dialog and its slideshow pages)."""
+        """Stop listening for changes."""
         self.art.artist_listeners.remove(self._listener)
-        self.art.slideshow_listeners.remove(self._slides_listener)
-        stack = self.nav.get_navigation_stack()
-        for i in range(stack.get_n_items()):
-            page = stack.get_item(i)
-            if isinstance(page, _Page):
-                page.detach()
-
-    def _sync_slideshow_row(self):
-        """The slideshow row's subtitle: what's showing, how many items, on or off."""
-        ss = self.art.slideshows
-        if not ss.all_media():
-            self.slideshow_row.set_subtitle("Not set")
-            return
-        n = len(self.art.slideshow_images())
-        state = "On" if self.art.slideshow_enabled else "Off"
-        self.slideshow_row.set_subtitle(f"{ss.describe_active()} · {n} item{'s' if n != 1 else ''} · {state}")
-
-    def show_slideshow(self):
-        """Open the Background Slideshow pages (Black Hole mode only)."""
-        if self.art.turned and self.nav.find_page("slideshow") is None:
-            self.nav.push(SlideshowsPage(self))
 
     # ---- list ----
 

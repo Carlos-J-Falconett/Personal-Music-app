@@ -52,6 +52,8 @@ class Player(GObject.Object):
         # Per-band magnitudes in dB (SPECTRUM_BANDS floats), timed to match what is being heard.
         "spectrum": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "eq-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        # Repeat Current Song reached the end and starts the same song again (a new listen).
+        "looped": (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
     def __init__(self):
@@ -551,6 +553,7 @@ class Player(GObject.Object):
     def _on_eos(self, _bus, _msg):
         """End of a song: repeat it (Repeat Current Song) or go to the next one."""
         if self._repeat == Repeat.ONE:
+            self.emit("looped")
             self._spectrum_queue.clear()
             self._playbin.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
             self.emit("seeked", 0.0)

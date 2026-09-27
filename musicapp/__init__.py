@@ -10,6 +10,7 @@ Modules (main.py starts application.main):
 - watcher      folder monitors that trigger debounced partial rescans
 - library      the in-memory model (TrackItem, AlbumItem, Library) shared by every view
 - player       GStreamer playback, the queue with shuffle/repeat, equalizer and spectrum analysis
+- stats        listening history (what was played, for how long) and the Stats tab's calculations
 - mpris        the MPRIS D-Bus service (GNOME media controls, media keys)
 - lyrics       lyrics lookup: tags, sidecar files, disk cache, lrclib.net
 - art          cover art and artist images, scaled and cached; Black Hole mode state

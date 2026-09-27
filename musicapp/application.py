@@ -15,6 +15,7 @@ from .lyrics import LyricsService  # noqa: E402
 from .mpris import MprisService  # noqa: E402
 from .player import Player, Repeat  # noqa: E402
 from .scanner import Scanner  # noqa: E402
+from .stats import ListeningRecorder  # noqa: E402
 from .themes import ThemeManager  # noqa: E402
 from .ui.mode_icon import follow_mode  # noqa: E402
 from .ui.window import MainWindow  # noqa: E402
@@ -39,7 +40,7 @@ SHORTCUTS = [
         ("Show / Hide Lyrics", "<Control>l"),
         ("Show / Hide Equalizer", "<Control>e"),
         ("Focus on Now Playing", "<Control><Shift>f"),
-        ("Hide / Show Interface (Black Hole mode)", "<Control>h"),
+        ("Hide / Show Interface", "<Control>h"),
         ("Rescan Library", "F5"),
         ("Keyboard Shortcuts", "<Control>question"),
         ("Quit", "<Control>q"),
@@ -97,6 +98,7 @@ class MusicApp(Adw.Application):
         self.art = ArtCache()
         self.lyrics = LyricsService()
         self.player = Player()
+        self.stats = ListeningRecorder(self.db, self.player)  # listening history for the Stats tab
         self.player.default_tracks = lambda: self.library.sorted_items
         self.player.eq_lookup = lambda track: self.db.get_track_eq(track.id)
         self.scanner = Scanner(self.db, self.music_dir)
@@ -138,6 +140,7 @@ class MusicApp(Adw.Application):
         self.mpris.shutdown()
         self.art.shutdown()
         self.lyrics.shutdown()
+        self.stats.shutdown()  # saves the song in progress, so before the database closes
         self.db.close()
         Adw.Application.do_shutdown(self)
 
@@ -216,7 +219,7 @@ class MusicApp(Adw.Application):
         if not self.art.turned:
             return
         if not switch():
-            self._toast("No slideshows yet: add them in Artist Images → Background Slideshow")
+            self._toast("No slideshows yet: add them in the Slideshows tab")
             return
         if not self.art.slideshow_enabled:
             self.change_action_state("slideshow", GLib.Variant("b", True))

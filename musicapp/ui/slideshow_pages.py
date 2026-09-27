@@ -1,12 +1,15 @@
-"""The Background Slideshow pages of the Artist Images dialog (Black Hole mode):
-Slideshows (Global and the groups) → a group (its individual slideshows) → a slideshow (its images
-and videos). Each page follows changes live, including ones made with the keyboard shortcuts."""
+"""The pages of the Slideshows tab (Black Hole mode, see slideshows_view.py):
+Slideshows (settings, Global and the groups) → a group (its individual slideshows) → a slideshow
+(its images and videos). Each page follows changes live, including ones made with the keyboard
+shortcuts."""
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from ..art import SLIDE_SECONDS_MAX, SLIDE_SECONDS_MIN, THUMB, is_video
+from .artists_view import back_button
 from .dialogs import ask_name, confirm_delete
 from .silent_video import SilentVideo
+from .widgets import follow_compact, icon_button
 
 
 def _count(n: int, word: str) -> str:
@@ -20,32 +23,66 @@ def _items(n: int) -> str:
 
 
 class _Page(Adw.NavigationPage):
-    """A page that rebuilds itself whenever the slideshows change, until it's detached."""
+    """A page of the Slideshows tab: a glass card with a page header (title, subtitle, action
+    buttons; pushed pages also get a back button above it) and scrolling content in `self.box`.
+    It rebuilds itself whenever the slideshows change, until it's detached.
 
-    def __init__(self, dialog, title: str, tag: str):
+    `host` is the SlideshowsView holding the pages: it provides .nav (the navigation view), .win
+    (the main window), .art and .toast()."""
+
+    def __init__(self, host, title: str, tag: str, back: str | None = None, on_back=None):
         super().__init__(title=title, tag=tag)
-        self.dialog = dialog
-        self.art = dialog.art
-        self.slideshows = dialog.art.slideshows
-        self.header = Adw.HeaderBar()
+        self.host = host
+        self.art = host.art
+        self.slideshows = host.art.slideshows
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        if back is not None:
+            card.append(back_button(back, on_back))
+        header = Gtk.Box(spacing=12)
+        header.add_css_class("page-header")
+        titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True, valign=Gtk.Align.CENTER)
+        self.title_label = Gtk.Label(label=title, xalign=0, ellipsize=3)
+        self.title_label.add_css_class("page-title")
+        self.subtitle = Gtk.Label(xalign=0, wrap=True)
+        self.subtitle.add_css_class("page-subtitle")
+        titles.append(self.title_label)
+        titles.append(self.subtitle)
+        header.append(titles)
+        self.header_actions = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+        header.append(self.header_actions)
+        card.append(header)
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                           margin_start=18, margin_end=18, margin_top=6, margin_bottom=18)
-        toolbar = Adw.ToolbarView()
-        toolbar.add_top_bar(self.header)
-        toolbar.set_content(Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, child=self.box))
-        self.set_child(toolbar)
+                           margin_start=24, margin_end=24, margin_bottom=24)
+        card.append(Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True,
+                                       child=Adw.Clamp(child=self.box, maximum_size=900)))
+        follow_compact(host.win, self, _Page._apply_compact)
+        card.add_css_class("content-glass")
+        card.set_overflow(Gtk.Overflow.HIDDEN)  # clip to the rounded card
+        self.set_child(card)
         self._syncing = False  # true while rows are rebuilt, so radio buttons don't act
         self._listener = self._on_changed
         self.art.slideshow_listeners.append(self._listener)
 
+    @staticmethod
+    def _apply_compact(page, level):
+        """Phone-sized windows: slimmer side margins, so the settings rows still fit."""
+        margin = 12 if level == 2 else 24
+        page.box.set_margin_start(margin)
+        page.box.set_margin_end(margin)
+
+    def _set_heading(self, title: str):
+        """Change the page's title (after a rename)."""
+        self.set_title(title)
+        self.title_label.set_text(title)
+
     def detach(self):
-        """Stop following changes (the page was popped or the dialog closed)."""
+        """Stop following changes (the page was popped, or left the tab)."""
         if self._listener in self.art.slideshow_listeners:
             self.art.slideshow_listeners.remove(self._listener)
 
     def _on_changed(self):
-        """The slideshows changed: rebuild (or stop listening, if the page has left the dialog)."""
-        if self.dialog.nav.find_page(self.get_tag()) is not self:  # no longer in the dialog
+        """The slideshows changed: rebuild (or stop listening, if the page has left the tab)."""
+        if self.host.nav.find_page(self.get_tag()) is not self:  # no longer in the tab
             self.detach()
             return
         self._syncing = True
@@ -59,10 +96,10 @@ class _Page(Adw.NavigationPage):
         raise NotImplementedError
 
     def _header_button(self, icon, tooltip, callback):
-        """An icon button at the end of the header bar."""
-        button = Gtk.Button(icon_name=icon, tooltip_text=tooltip)
+        """A round icon button at the right of the page header."""
+        button = icon_button(icon, tooltip, circular=True)
         button.connect("clicked", lambda *_: callback())
-        self.header.pack_end(button)
+        self.header_actions.append(button)
         return button
 
     def _radio_row(self, title, subtitle, showing, on_pick, group_with, on_open=None):
@@ -84,7 +121,7 @@ class _Page(Adw.NavigationPage):
 
     def _pick(self, select):
         """Show something else: the same as the shortcuts (turns the slideshow on, toasts)."""
-        GLib.idle_add(lambda: self.dialog.win.app._switch_slideshow(lambda: select() or True) and False)
+        GLib.idle_add(lambda: self.host.win.app._switch_slideshow(lambda: select() or True) and False)
 
     def _wide_button(self, label, icon, callback, suggested=True):
         """A pill button with an icon and label."""
@@ -105,17 +142,15 @@ class _Page(Adw.NavigationPage):
 class SlideshowsPage(_Page):
     """Settings, then Global and the groups: pick what shows, open a group to manage it."""
 
-    def __init__(self, dialog):
-        super().__init__(dialog, "Background Slideshow", "slideshow")
-        self.caption = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
-        self.caption.add_css_class("dim")
-        self.box.append(self.caption)
+    def __init__(self, host):
+        super().__init__(host, "Slideshows", "slideshow")
+        self.caption = self.subtitle  # the header's subtitle explains the slideshows
 
         self.switch = Adw.SwitchRow(title="Play Slideshow", subtitle="Off shows artist images again")
         self.switch.set_active(self.art.slideshow_enabled)
         # Goes through app.slideshow, so the menu's Slideshow item and the saved setting follow.
         self.switch.connect("notify::active", lambda row, _p: self.art.slideshow_enabled != row.get_active()
-                            and dialog.win.app.change_action_state("slideshow", GLib.Variant("b", row.get_active())))
+                            and host.win.app.change_action_state("slideshow", GLib.Variant("b", row.get_active())))
         self.seconds = Adw.SpinRow(title="Seconds per Image", subtitle="Videos always play to the end",
                                    adjustment=Gtk.Adjustment(lower=SLIDE_SECONDS_MIN, upper=SLIDE_SECONDS_MAX,
                                                              step_increment=1, page_increment=10,
@@ -153,22 +188,23 @@ class SlideshowsPage(_Page):
             subtitle = f"{_count(len(group.slideshows), 'slideshow')} · {_items(len(ss.group_media(group)))}"
             row, _radio = self._radio_row(group.name, subtitle, ss.is_showing(group),
                                           lambda g=group: ss.select_group(g), first,
-                                          on_open=lambda g=group: self.dialog.nav.push(GroupPage(self.dialog, g)))
+                                          on_open=lambda g=group: self.host.nav.push(GroupPage(self.host, g)))
             self.rows.append(row)
 
     def _new_group(self):
         """Ask for a name, create the group and open it."""
         ss = self.slideshows
-        ask_name(self.dialog, heading="New Group", confirm="Create", placeholder="Group name",
+        ask_name(self.host, heading="New Group", confirm="Create", placeholder="Group name",
                  initial=ss.next_name("Group", [g.name for g in ss.groups]),
-                 on_done=lambda name: self.dialog.nav.push(GroupPage(self.dialog, ss.create_group(name))))
+                 on_done=lambda name: self.host.nav.push(GroupPage(self.host, ss.create_group(name))))
 
 
 class GroupPage(_Page):
     """A group: show the whole group or one of its slideshows, add, rename, delete."""
 
-    def __init__(self, dialog, group):
-        super().__init__(dialog, group.name, f"group:{group.id}")
+    def __init__(self, host, group):
+        super().__init__(host, group.name, f"group:{group.id}", back="Slideshows",
+                         on_back=lambda: host.nav.pop_to_tag("slideshow"))
         self.group = group
         self._header_button("user-trash-symbolic", "Delete Group", self._delete)
         self._header_button("document-edit-symbolic", "Rename Group", self._rename)
@@ -182,7 +218,9 @@ class GroupPage(_Page):
         ss = self.slideshows
         if ss.find_group(self.group.id) is None:  # deleted
             return
-        self.set_title(self.group.name)
+        self._set_heading(self.group.name)
+        showing = " · showing now" if ss.is_showing(self.group) else ""
+        self.subtitle.set_text(f"Group · {_count(len(self.group.slideshows), 'slideshow')}{showing}")
         self.rows.remove_all()
         whole, first = self._radio_row("Whole Group", f"All of its slideshows · {_items(len(ss.group_media(self.group)))}",
                                        ss.is_showing(self.group), lambda: ss.select_group(self.group), None)
@@ -190,22 +228,22 @@ class GroupPage(_Page):
         for slideshow in self.group.slideshows:
             row, _radio = self._radio_row(slideshow.name, _items(len(ss.media(slideshow))),
                                           ss.is_showing(slideshow), lambda s=slideshow: ss.select_slideshow(s), first,
-                                          on_open=lambda s=slideshow: self.dialog.nav.push(
-                                              SlideshowPage(self.dialog, s)))
+                                          on_open=lambda s=slideshow: self.host.nav.push(
+                                              SlideshowPage(self.host, s)))
             self.rows.append(row)
 
     def _new_slideshow(self):
         """Ask for a name, create the slideshow and open it."""
         ss = self.slideshows
-        ask_name(self.dialog, heading="New Slideshow", confirm="Create", placeholder="Slideshow name",
+        ask_name(self.host, heading="New Slideshow", confirm="Create", placeholder="Slideshow name",
                  body=f"In “{self.group.name}”",
                  initial=ss.next_name("Slideshow", [s.name for s in self.group.slideshows]),
-                 on_done=lambda name: self.dialog.nav.push(
-                     SlideshowPage(self.dialog, ss.create_slideshow(self.group, name))))
+                 on_done=lambda name: self.host.nav.push(
+                     SlideshowPage(self.host, ss.create_slideshow(self.group, name))))
 
     def _rename(self):
         """Ask for the group's new name."""
-        ask_name(self.dialog, heading="Rename Group", confirm="Rename", placeholder="Group name",
+        ask_name(self.host, heading="Rename Group", confirm="Rename", placeholder="Group name",
                  initial=self.group.name, on_done=lambda name: self.slideshows.rename_group(self.group, name))
 
     def _delete(self):
@@ -214,11 +252,11 @@ class GroupPage(_Page):
 
         def delete():
             """Leave the group's pages first, then delete."""
-            self.dialog.nav.pop_to_tag("slideshow")
+            self.host.nav.pop_to_tag("slideshow")
             ss.delete_group(group)
-            self.dialog.toast(f"Deleted “{group.name}”")
+            self.host.toast(f"Deleted “{group.name}”")
 
-        confirm_delete(self.dialog, f"Delete “{group.name}”?",
+        confirm_delete(self.host, f"Delete “{group.name}”?",
                        f"Its {_count(len(group.slideshows), 'slideshow')} and their "
                        f"{_items(len(ss.group_media(group)))} will be deleted. "
                        "The original files you added stay where they are.", delete)
@@ -227,15 +265,13 @@ class GroupPage(_Page):
 class SlideshowPage(_Page):
     """An individual slideshow: its images and videos, show it, rename, delete."""
 
-    def __init__(self, dialog, slideshow):
-        super().__init__(dialog, slideshow.name, f"slideshow:{slideshow.id}")
+    def __init__(self, host, slideshow):
+        super().__init__(host, slideshow.name, f"slideshow:{slideshow.id}", back=slideshow.group.name,
+                         on_back=lambda: host.nav.pop())
         self.slideshow = slideshow
         self._header_button("user-trash-symbolic", "Delete Slideshow", self._delete)
         self._header_button("document-edit-symbolic", "Rename Slideshow", self._rename)
 
-        self.where = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
-        self.where.add_css_class("dim")
-        self.box.append(self.where)
         self.show_button = self._wide_button("Show This Slideshow", "media-playback-start-symbolic",
                                              lambda: self._pick(lambda: self.slideshows.select_slideshow(slideshow)))
         self.box.append(self.show_button)
@@ -251,7 +287,7 @@ class SlideshowPage(_Page):
         self.stack.add_named(self.flow, "images")
         self.box.append(self.stack)
 
-        # Side by side, or one above the other when the dialog is too narrow for both.
+        # Side by side, or one above the other when the page is too narrow for both.
         buttons = Adw.WrapBox(child_spacing=12, line_spacing=10, halign=Gtk.Align.CENTER, margin_top=6)
         buttons.append(self._wide_button("Add Images or Videos…", "list-add-symbolic", self._choose))
         self.remove_all = Gtk.Button(label="Remove All")
@@ -280,9 +316,9 @@ class SlideshowPage(_Page):
         ss, slideshow = self.slideshows, self.slideshow
         if ss.find_slideshow(slideshow.id) is None:  # deleted
             return
-        self.set_title(slideshow.name)
+        self._set_heading(slideshow.name)
         showing = ss.is_showing(slideshow)
-        self.where.set_label(f"In “{slideshow.group.name}”" + (" · showing now" if showing else ""))
+        self.subtitle.set_text(f"In “{slideshow.group.name}”" + (" · showing now" if showing else ""))
         self.show_button.set_sensitive(not showing)
         media = ss.media(slideshow)
         if media != self._shown:  # rebuilding restarts the video thumbnails: only when needed
@@ -333,7 +369,7 @@ class SlideshowPage(_Page):
         pictures = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)
         if pictures:
             chooser.set_initial_folder(Gio.File.new_for_path(pictures))
-        chooser.open_multiple(self.dialog.win, None, self._on_chosen)
+        chooser.open_multiple(self.host.win, None, self._on_chosen)
 
     def _on_chosen(self, chooser, result):
         """Copy the chosen files into the slideshow (in the background) and say how it went."""
@@ -350,10 +386,10 @@ class SlideshowPage(_Page):
             text = f"Added {added} to “{self.slideshow.name}”"
             if skipped:
                 text += f" ({skipped} couldn't be read)"
-            self.dialog.toast(text)
+            self.host.toast(text)
 
         if any(is_video(p) for p in paths):
-            self.dialog.toast("Adding…")  # videos take a moment to copy
+            self.host.toast("Adding…")  # videos take a moment to copy
         self.slideshows.add_media(self.slideshow, paths, done)
 
     def _confirm_clear(self):
@@ -364,11 +400,11 @@ class SlideshowPage(_Page):
         alert.add_response("remove", "Remove All")
         alert.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
         alert.connect("response", lambda _a, r: self.slideshows.clear(self.slideshow) if r == "remove" else None)
-        alert.present(self.dialog)
+        alert.present(self.host)
 
     def _rename(self):
         """Ask for the slideshow's new name."""
-        ask_name(self.dialog, heading="Rename Slideshow", confirm="Rename", placeholder="Slideshow name",
+        ask_name(self.host, heading="Rename Slideshow", confirm="Rename", placeholder="Slideshow name",
                  initial=self.slideshow.name,
                  on_done=lambda name: self.slideshows.rename_slideshow(self.slideshow, name))
 
@@ -378,10 +414,10 @@ class SlideshowPage(_Page):
 
         def delete():
             """Leave the page first, then delete."""
-            self.dialog.nav.pop()
+            self.host.nav.pop()
             ss.delete_slideshow(slideshow)
-            self.dialog.toast(f"Deleted “{slideshow.name}”")
+            self.host.toast(f"Deleted “{slideshow.name}”")
 
-        confirm_delete(self.dialog, f"Delete “{slideshow.name}”?",
+        confirm_delete(self.host, f"Delete “{slideshow.name}”?",
                        f"Its {_items(len(ss.media(slideshow)))} will be deleted from the slideshow. "
                        "The original files you added stay where they are.", delete)

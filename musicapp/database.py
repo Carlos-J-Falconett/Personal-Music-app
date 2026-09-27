@@ -54,6 +54,20 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Listening history (stats.py): one row per listening session of a song. The song's details are
+-- copied in, so the history survives rescans, moved files and deleted tracks.
+CREATE TABLE IF NOT EXISTS plays (
+    id        INTEGER PRIMARY KEY,
+    started   REAL NOT NULL,              -- unix time the session began
+    listened  REAL NOT NULL,              -- seconds actually playing
+    completed INTEGER NOT NULL DEFAULT 0, -- 1 once it counts as a play (half the song or 4 min)
+    track_id  INTEGER,
+    title     TEXT NOT NULL,
+    artist    TEXT NOT NULL,              -- the grouping artist (album artist, else artist)
+    album     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS plays_started ON plays(started);
 """
 
 TRACK_FIELDS = (
@@ -227,6 +241,56 @@ class Database:
 
     def delete_track_eq(self, track_id: int):
         self._write("DELETE FROM track_eq WHERE track_id = ?", (track_id,))
+
+    # ---- listening history (see stats.py) ------------------------------
+
+    def save_play(self, play_id: int | None, started: float, listened: float, completed: bool,
+                  track_id: int, title: str, artist: str, album: str) -> int:
+        """Insert a listening session (play_id None) or update its listened time and completion.
+        Returns its id."""
+        if play_id is None:
+            return self._write(
+                "INSERT INTO plays (started, listened, completed, track_id, title, artist, album) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (started, listened, int(completed), track_id, title, artist, album)).lastrowid
+        self._write("UPDATE plays SET listened = ?, completed = ? WHERE id = ?", (listened, int(completed), play_id))
+        return play_id
+
+    def play_totals(self, since: float) -> tuple[float, int, int, int]:
+        """(seconds listened, plays, distinct songs, distinct artists) since a unix time."""
+        row = self._query(
+            "SELECT COALESCE(SUM(listened), 0), COALESCE(SUM(completed), 0), "
+            "COUNT(DISTINCT title || char(0) || artist), COUNT(DISTINCT artist) "
+            "FROM plays WHERE started >= ?", (since,))[0]
+        return float(row[0]), int(row[1]), int(row[2]), int(row[3])
+
+    def play_top(self, kind: str, since: float, limit: int):
+        """The most listened artists, albums or songs since a unix time, as rows of
+        (artist, album, title, track_id, seconds); album/title are '' and track_id NULL where they
+        don't apply (track_id: the song's latest id, to play it if it's still in the library)."""
+        columns = {"artists": "artist, '' AS album, '' AS title, NULL AS track_id",
+                   "albums": "artist, album, '' AS title, NULL AS track_id",
+                   "songs": "artist, MAX(album) AS album, title, MAX(track_id) AS track_id"}[kind]
+        group = {"artists": "artist", "albums": "artist, album", "songs": "title, artist"}[kind]
+        return self._query(
+            f"SELECT {columns}, SUM(listened) AS seconds FROM plays WHERE started >= ? "
+            f"GROUP BY {group} ORDER BY seconds DESC LIMIT ?", (since, limit))
+
+    def play_days(self, since: float, until: float) -> dict[str, tuple[float, int]]:
+        """{'YYYY-MM-DD': (seconds, plays)} per local day, for sessions started in [since, until)."""
+        rows = self._query(
+            "SELECT date(started, 'unixepoch', 'localtime') AS day, SUM(listened), SUM(completed) "
+            "FROM plays WHERE started >= ? AND started < ? GROUP BY day", (since, until))
+        return {r[0]: (float(r[1]), int(r[2])) for r in rows}
+
+    def listening_days(self) -> list[str]:
+        """Every local day ('YYYY-MM-DD') with any listening, for streaks."""
+        return [r[0] for r in self._query(
+            "SELECT DISTINCT date(started, 'unixepoch', 'localtime') FROM plays ORDER BY 1")]
+
+    def first_play(self) -> float | None:
+        """When the first recorded session started, or None."""
+        return self._query("SELECT MIN(started) FROM plays")[0][0]
 
     # ---- settings -----------------------------------------------------
 

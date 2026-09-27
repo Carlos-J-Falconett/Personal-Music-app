@@ -40,7 +40,7 @@ GROUPS = [
         ("backdrop_dim", "Background Dim", "The shade over the artist backdrop (kept translucent)", "#000000", 1),
     ]),
     ("Header Bar", [
-        ("tabs_background", "Tabs Bar", "Behind the All Songs / Artists / Favorites / Playlists tabs", "panels", 1),
+        ("tabs_background", "Tabs Bar", "Behind the All Songs / Artists / Favorites / Playlists / Stats tabs", "panels", 1),
         ("tab_text", "Tab Text", "Tabs that aren't selected", "secondary_text", 1),
         ("tab_selected_text", "Selected Tab Text", "The selected (and hovered) tab", "text", 1),
         ("tab_selected", "Selected Tab", "The pill behind the selected tab (kept faint)", "highlight", 1),
@@ -141,6 +141,12 @@ GROUPS = [
         ("focus_popup", "Popup", "The Queue / Lyrics / Equalizer popup (kept glassy)", "panels", 1),
         ("focus_shade", "Shade", "The shading over the backdrop behind the song (kept translucent)",
          "#000000", 1),
+    ]),
+    ("Stats", [
+        ("stats_cards", "Number Cards", "Behind the four numbers on the Stats tab (kept glassy)", "panels", 1),
+        ("stats_numbers", "Numbers", "The big numbers on those cards", "text", 1),
+        ("stats_heatmap", "Listening Days", "The heatmap's squares for days with listening", "accent", 1),
+        ("stats_empty_day", "Empty Days", "The heatmap's squares for days without listening", "text", 0.12),
     ]),
     ("Other", [
         ("resize_handle", "Resize Handle", "The line shown when resizing the Now Playing panel", "accent_light", 1),
@@ -364,6 +370,13 @@ class ThemeManager:
     def is_custom(self) -> bool:
         """Whether something other than the Default look is showing (a custom theme or a preview)."""
         return self._previewing or self.active != DEFAULT_NAME
+
+    def color(self, key: str) -> tuple[float, float, float]:
+        """The colour showing right now for any key (a detailed one follows its basic colour
+        while unset), as RGB floats. For elements drawn in code, like the Stats heatmap."""
+        base = default_theme().colors
+        colors = {**self._current, **{k: self._current.get(k) or base[k] for k in REQUIRED}}
+        return to_rgb(effective(colors, key))
 
     def colors(self) -> dict[str, tuple[float, float, float]]:
         """The colours being shown right now, as RGB floats."""

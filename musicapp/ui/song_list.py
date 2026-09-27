@@ -14,14 +14,17 @@ class SongList(Gtk.Box):
     `win` is the main window, which provides .player, .library, .toast(), .show_artist()
     and .new_playlist_with(). Override hooks via constructor kwargs:
       playlist_id: enables "Remove from Playlist" in the context menu.
+      queue_from: a callable returning the songs to queue when one is double-clicked (it plays
+        from that song); by default the list itself. Search results use the All Songs tab.
     """
 
     def __init__(self, win, *, title: str = "", empty_icon: str = "audio-x-generic-symbolic",
                  empty_title: str = "No Songs", empty_description: str = "",
-                 show_track_no: bool = False, show_header: bool = True):
+                 show_track_no: bool = False, show_header: bool = True, queue_from=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.win = win
         self.playlist_id: int | None = None
+        self.queue_from = queue_from
         self._menu_items: list[TrackItem] = []
         self._summary = ""
 
@@ -232,8 +235,13 @@ class SongList(Gtk.Box):
             self.win.player.play_tracks(items, 0)
 
     def _on_activate(self, _view, position):
-        """A song was double-clicked (or activated): play the list from it."""
-        self.win.player.play_tracks(self.visible_items(), position)
+        """A song was double-clicked (or activated): play the list from it, or with `queue_from`,
+        that list from this song."""
+        if self.queue_from is None:
+            self.win.player.play_tracks(self.visible_items(), position)
+            return
+        item, queue = self.sort_model.get_item(position), self.queue_from()
+        self.win.player.play_tracks(queue, queue.index(item) if item in queue else 0)
 
     # ---- context menu ----
 

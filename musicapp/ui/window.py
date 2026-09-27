@@ -19,15 +19,20 @@ from .theme_dialog import ThemeDialog
 from .now_playing import NowPlayingPanel
 from .playlists_view import PlaylistsView
 from .search_view import SearchView
+from .slideshows_view import SlideshowsView
 from .song_list import SongList
+from .stats_view import StatsView
 from .widgets import NarrowColumn
 
-TABS = ("songs", "artists", "favorites", "playlists")
+# "slideshows" is shown only in Black Hole mode.
+TABS = ("songs", "artists", "favorites", "playlists", "stats", "slideshows")
 # Icon-only top bar buttons on small windows: the tabs, then Now Playing.
 TAB_ICONS = (("songs", "audio-x-generic-symbolic", "All Songs"),
              ("artists", "avatar-default-symbolic", "Artists"),
              ("favorites", "musicapp-heart-filled-symbolic", "Favorites"),
              ("playlists", "musicapp-playlist-symbolic", "Playlists"),
+             ("stats", "musicapp-stats-symbolic", "Stats"),
+             ("slideshows", "image-x-generic-symbolic", "Slideshows"),
              ("now", "audio-speakers-symbolic", "Now Playing"))
 PANEL_MIN_WIDTH = 400
 PANEL_DEFAULT_WIDTH = 485
@@ -48,10 +53,11 @@ ARROWS = {Gdk.KEY_Right: 1, Gdk.KEY_KP_Right: 1, Gdk.KEY_Left: -1, Gdk.KEY_KP_Le
 
 class MainWindow(Adw.ApplicationWindow):
     """The main window. Layers, back to front: the artist backdrop (or Black Hole slideshow), then the
-    header bar with the tabs and search, the library pages, and the Now Playing panel on the right
-    (a full-window overlay on small windows); or, instead of all that, the full-window focus view.
+    header bar with the tabs (All Songs, Artists, Favorites, Playlists, Stats, and in Black Hole mode
+    Slideshows) and search, the library pages, and the Now Playing panel on the right (a full-window
+    overlay on small windows); or, instead of all that, the full-window focus view.
     It adapts to three sizes (compact levels 0-2, see the breakpoints in _build), owns the window
-    actions (playlists, panels, focus view, Black Hole's hide-interface and repeat-slide) and the
+    actions (playlists, panels, focus view, Hide Interface, Black Hole's repeat-slide) and the
     window-wide keys (space, Escape, Black Hole slideshow keys)."""
     __gsignals__ = {
         # 0 = wide, 1 = narrow (tabs at bottom), 2 = phone-sized
@@ -81,7 +87,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.refresh_all()
 
         last = db.get_setting("last-tab", "songs")
-        self.view_stack.set_visible_child_name(last if last in TABS else "songs")
+        # The app starts in normal mode, where the Slideshows tab doesn't exist.
+        self.view_stack.set_visible_child_name(last if last in TABS and last != "slideshows" else "songs")
 
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._on_key_pressed)
@@ -110,6 +117,12 @@ class MainWindow(Adw.ApplicationWindow):
                                              "musicapp-heart-filled-symbolic")
         self.view_stack.add_titled_with_icon(self.playlists_page, "playlists", "Playlists",
                                              "musicapp-playlist-symbolic")
+        self.stats_page = StatsView(self)
+        self.view_stack.add_titled_with_icon(self.stats_page, "stats", "Stats", "musicapp-stats-symbolic")
+        # Black Hole mode only (see _sync_black_hole): managing its background slideshows.
+        self.slideshows_page = SlideshowsView(self)
+        self._slideshows_tab = self.view_stack.add_titled_with_icon(self.slideshows_page, "slideshows", "Slideshows",
+                                                                     "image-x-generic-symbolic")
 
         self.search_view = SearchView(self)
         self.content = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=150)
@@ -240,7 +253,7 @@ class MainWindow(Adw.ApplicationWindow):
             click = Gtk.GestureClick(propagation_phase=Gtk.PropagationPhase.CAPTURE)
             click.connect("pressed", lambda *_: self.show_ui())
             bar.add_controller(click)
-        self._sync_hide_ui()
+        self._sync_black_hole()
 
     def _fill_app_menu(self):
         """The app-icon menu, rebuilt each time it opens (its header and Black Hole options change)."""
@@ -258,6 +271,8 @@ class MainWindow(Adw.ApplicationWindow):
         page.add_section("Appearance")
         page.add_item("applications-graphics-symbolic", "Themes…", lambda: act("win.themes", None))
         page.add_item("image-x-generic-symbolic", "Artist Images…", lambda: act("win.artist-images", None))
+        page.add_switch("view-conceal-symbolic", "Hide Interface", self.ui_hidden, self.set_ui_hidden,
+                        accel="<Control>h")
         if turned:
             page.add_section("Black Hole")
             page.add_switch("media-playlist-repeat-symbolic", "Slideshow", self.art.slideshow_enabled,
@@ -265,8 +280,6 @@ class MainWindow(Adw.ApplicationWindow):
             page.add_submenu("view-grid-symbolic", "Choose Slideshow", self._fill_slideshow_menu)
             page.add_switch("media-playlist-repeat-song-symbolic", "Repeat Current Slide", self.backdrop.repeating,
                             self.set_slide_repeat, accel="<Control><Shift>r")
-            page.add_switch("view-conceal-symbolic", "Hide Interface", self.ui_hidden,
-                            self.set_ui_hidden, accel="<Control>h")
             page.add_item("weather-clear-symbolic", "Exit Black Hole Mode", lambda: self.app.set_black_hole(False))
         page.add_section()
         page.add_item("preferences-desktop-keyboard-shortcuts-symbolic", "Keyboard Shortcuts",
@@ -467,8 +480,7 @@ class MainWindow(Adw.ApplicationWindow):
         add("focus-mode", lambda *_: self.set_focus_mode(not self.focus_mode))
         add("hide-ui", lambda *_: self.set_ui_hidden(not self.ui_hidden))
         add("slideshow-repeat", lambda *_: self.set_slide_repeat(not self.backdrop.repeating))
-        for name in ("hide-ui", "slideshow-repeat"):
-            self.lookup_action(name).set_enabled(False)  # Black Hole mode only
+        self.lookup_action("slideshow-repeat").set_enabled(False)  # Black Hole mode only
         # Focus view needs a song; it can always be left again.
         self.player.connect("track-changed", lambda *_: self._sync_focus_action())
 
@@ -496,16 +508,15 @@ class MainWindow(Adw.ApplicationWindow):
         """The focus view can be opened only when there's a song."""
         self.lookup_action("focus-mode").set_enabled(self.player.current is not None or self.focus_mode)
 
-    # ---- hidden interface (Black Hole mode) ----
+    # ---- hidden interface (Hide Interface, Ctrl+H) ----
 
     @property
     def ui_hidden(self) -> bool:
-        """Whether the interface is hidden (Black Hole mode's Hide Interface)."""
+        """Whether the interface is hidden (Hide Interface), leaving only the background."""
         return self.ui_stack.get_visible_child_name() == "hidden"
 
     def set_ui_hidden(self, hidden: bool):
-        """Hide everything under the top bar (Black Hole mode only), or bring it back."""
-        hidden = hidden and self.art.turned
+        """Hide everything under the top bar, or bring it back. Using the tabs also brings it back."""
         if hidden != self.ui_hidden:
             self.ui_stack.set_visible_child_name("hidden" if hidden else "ui")
 
@@ -521,13 +532,15 @@ class MainWindow(Adw.ApplicationWindow):
         self.backdrop.set_repeat(on)
         self.toast("Repeating this slide" if on else "Slideshow continues")
 
-    def _sync_hide_ui(self):
-        """Black Hole mode switched: its window actions follow, and the interface comes back when it ends."""
+    def _sync_black_hole(self):
+        """Black Hole mode switched: its window action and the Slideshows tab (and its small-window
+        icon) appear only in it. Leaving the mode while on that tab goes to All Songs."""
         turned = self.art.turned
-        self.lookup_action("hide-ui").set_enabled(turned)
         self.lookup_action("slideshow-repeat").set_enabled(turned)
-        if not turned:
-            self.set_ui_hidden(False)
+        self._slideshows_tab.set_visible(turned)
+        self._tab_buttons["slideshows"].set_visible(turned)
+        if not turned and self.view_stack.get_visible_child_name() == "slideshows":
+            self.view_stack.set_visible_child_name("songs")
 
     def _toggle_queue(self):
         """Show/hide the queue, in the focus view's popup or the Now Playing panel."""
@@ -561,15 +574,18 @@ class MainWindow(Adw.ApplicationWindow):
         ArtistImageDialog(self, artist).present(self)
 
     def show_slideshows(self):
-        """Black Hole mode: the Artist Images dialog, open on its slideshows."""
-        dialog = ArtistImageDialog(self)
-        dialog.show_slideshow()
-        dialog.present(self)
+        """Black Hole mode: go to the Slideshows tab."""
+        if not self.art.turned:
+            return
+        self.show_ui()
+        self._clear_search()
+        self.view_stack.set_visible_child_name("slideshows")
+        self._hide_overlay_panel()
 
     def _on_artist_image_changed(self, name):
         """An artist image changed (or Black Hole mode switched): refresh what shows artist images."""
         if name is None:  # Black Hole mode switched
-            self._sync_hide_ui()
+            self._sync_black_hole()
         self.artists_page.refresh()
         self.search_view.refresh()
 

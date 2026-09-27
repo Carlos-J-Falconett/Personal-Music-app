@@ -22,6 +22,9 @@ translucent "glass" panels.
   themselves. Only files that changed are re-read, so rescans are quick.
 - **Now Playing panel** with the cover, song details, an audio wave visualizer, a time bar,
   shuffle/repeat and volume. The cover card flips over to show the **lyrics** or the **equalizer**.
+- **Stats tab:** how much you've listened this week, month, year or all time (time, plays, songs,
+  artists), a year of days as a heatmap with your listening streaks, and your top artists, albums
+  and songs.
 - **Queue** ("Up Next"): play next, reorder by dragging, remove, clear. With Repeat Queue it shows
   what comes around again.
 - **Lyrics** from the song's tags, a `.lrc`/`.txt` file next to it, or [LRCLIB](https://lrclib.net).
@@ -82,7 +85,16 @@ changed files are read.
   names are links. The queue, lyrics and equalizer buttons sit at the top of the panel; drag the
   panel's left edge to resize it.
 - **Search:** start typing anywhere, or press Ctrl+F. Every word must match. Results are split
-  into All / Songs / Artists / Albums.
+  into All / Songs / Artists / Albums. Playing a song you found queues your whole library in All
+  Songs order from that song, just as if you had double-clicked it on the All Songs tab.
+- **Hide Interface** (Ctrl+H, or the switch in the main menu): everything under the top bar
+  disappears so only the background shows. Clicking a tab, or Ctrl+H again, brings it back.
+- **Stats:** the fifth tab. Pick Week / Month / Year / All time (the last 7, 30 or 365 days, or
+  everything) for the four numbers and the rankings. The heatmap shows a year of days, darker to
+  brighter by how long you listened; hover a day to see its date, time and plays, and use ‹ / ›
+  to see earlier years. Its summary gives the days listened that year, your current streak and
+  your longest. Click a ranked artist or album to open it, or a song to play the ranking from it.
+  Listening is recorded from the first launch of this version on; nothing before that is known.
 - **Main menu** (the Sun icon, top left): new playlist, rescan, Themes…, Artist Images…,
   keyboard shortcuts, About, Quit.
 - **Themes:** pick a theme, or create one. Basic colours are required. Every element (tabs, song
@@ -110,6 +122,7 @@ changed files are read.
 | Ctrl+L | Show / hide lyrics |
 | Ctrl+E | Show / hide the equalizer |
 | Ctrl+Shift+F | Focus view (Esc leaves it) |
+| Ctrl+H | Hide / show the interface |
 | F5 | Rescan the library |
 | Ctrl+? | Keyboard shortcuts |
 | Ctrl+Q | Quit |
@@ -118,7 +131,7 @@ changed files are read.
 
 | What | Where |
 |---|---|
-| Library, favorites, playlists, per-song EQ, settings | `~/.local/share/musicappv5/library.db` (SQLite) |
+| Library, favorites, playlists, per-song EQ, listening history, settings | `~/.local/share/musicappv5/library.db` (SQLite) |
 | Cached online lyrics | `~/.local/share/musicappv5/lyrics/` |
 | Your artist images (copies) | `~/.local/share/musicappv5/artist-images/` |
 | Scaled covers and images (safe to delete) | `~/.cache/musicappv5/covers/` |
@@ -151,6 +164,19 @@ original order plus a separate play order, so shuffle can be turned off without 
 place. Each song loads its own saved EQ. Spectrum results are buffered and released when the
 audio they describe is heard, so the visualizer is in sync. The spectrum is only measured while a
 visualizer is on screen. Unplayable files are skipped with a message.
+
+**Listening history** (`stats.py`, `ui/stats_view.py`). `ListeningRecorder` follows the
+player and stores one row per listening session in the `plays` table. Each row keeps the title,
+artist and album, so the history survives rescans and deleted files.
+- Only time actually playing counts; pauses and seeks don't.
+- A session counts as a play once half the song, or 4 minutes, has been heard.
+- Sessions under 5 seconds (skips) aren't kept.
+- Each loop of Repeat Current Song is a new session.
+- The song in progress is saved every 30 seconds and when the app quits.
+
+The Stats page reads the database only while it's showing. The heatmap is drawn with cairo in the
+theme's "Listening Days" colour; the Stats theme group also colours the number cards and empty
+days.
 
 **Pictures** (`art.py`). Covers and artist images are scaled once on worker threads and cached on
 disk per size: 128 px thumbnails, 512 px large covers, and a full-window 2560 px image with a
@@ -200,12 +226,12 @@ mentions it.
 
 - **Artist images:** Artist Images… now edits a separate set of Black Hole images. An artist
   without one keeps their normal image.
+- **A sixth tab, Slideshows,** appears in the top bar (and as an icon on small windows) to manage
+  the background slideshows. It disappears again when you leave the mode.
 - **Main menu → Black Hole section:**
   - **Slideshow** on/off
   - **Choose Slideshow** (marks the one showing; also **Manage Slideshows…**)
   - **Repeat Current Slide**
-  - **Hide Interface** (Ctrl+H): everything under the header bar disappears so only the background
-    shows. Clicking a tab brings the interface back.
   - **Exit Black Hole Mode**
 - The **Keyboard Shortcuts** window gets a "Black Hole Slideshows" section.
 
@@ -218,10 +244,10 @@ Slideshows are organised in three levels:
 - **Groups** show all of their slideshows one after another, as one slideshow.
 - **Global**, the default, shows everything from every group.
 
-Manage them in **Artist Images → Background Slideshow**, or main menu → Choose Slideshow →
-Manage Slideshows…. That opens three pages:
+Manage them in the **Slideshows** tab (main menu → Choose Slideshow → Manage Slideshows… also
+opens it). It has three pages, like the Artists and Playlists tabs:
 
-1. **Background Slideshow:** the on/off switch and **Seconds per Image** (3–600, default 10).
+1. **Slideshows:** the on/off switch and **Seconds per Image** (3–600, default 10).
    Below, a round button picks what shows: **Global** or one of the groups (click a group to open
    it). **New Group…** adds one.
 2. **A group:** show the **Whole Group** or one of its slideshows; **New Slideshow…**; rename or
@@ -257,7 +283,6 @@ moved into **Group 1 › Slideshow 1**. Nothing is deleted.
 | Ctrl+Shift+] / Ctrl+Shift+[ | Next / previous group; shows its first slideshow (groups without slideshows are skipped) |
 | Ctrl+G | Show the whole current group |
 | Ctrl+Shift+G | Show the Global slideshow |
-| Ctrl+H | Hide / show the interface |
 
 Using a slideshow shortcut also switches the slideshow on and shows what's playing now (for
 example "Group B › Four"). While a slideshow is playing, the arrow keys belong to it, except
@@ -282,7 +307,8 @@ while you're typing in a text field.
 - **Keys:** the arrow and Shift shortcuts are handled in `MainWindow._slideshow_key`
   (`ui/window.py`) before GTK's own shortcut handling. Otherwise Shift+letter shortcuts could be
   mistaken for their plain Ctrl versions (Ctrl+Shift+R for Ctrl+R, Ctrl+Shift+G for Ctrl+G).
-- **Management pages:** `ui/slideshow_pages.py`.
+- **The Slideshows tab:** `ui/slideshows_view.py` (shown only in Black Hole mode, see
+  `MainWindow._sync_black_hole`), with its pages in `ui/slideshow_pages.py`.
 
 Black Hole images: `~/.local/share/musicappv5/artist-images/turned/`.
 
@@ -302,6 +328,7 @@ musicapp/
   watcher.py            folder monitoring
   library.py            the in-memory model
   player.py             GStreamer playback, queue, EQ, spectrum
+  stats.py              listening history and the Stats tab's calculations
   mpris.py              MPRIS D-Bus service
   lyrics.py             lyrics lookup
   art.py                covers and artist images; Black Hole mode state
