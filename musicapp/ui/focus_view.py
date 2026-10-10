@@ -15,7 +15,7 @@ from .lyrics_view import LyricsView
 from .player_controls import PlayerControls
 from .queue_view import QueueView
 from .visualizer import WaveVisualizer
-from .widgets import follow_compact, song_actions
+from .widgets import follow_compact, follow_lyrics, lyrics_missing_mark, song_actions
 
 POPUP_WIDTH = 400  # the popup card's size when there's room for it
 POPUP_HEIGHT = 440
@@ -95,6 +95,10 @@ class FocusView(Gtk.Overlay):
         self.title = Gtk.Label(ellipsize=3, max_width_chars=40)
         self.title.add_css_class("focus-title")
         title_row.append(self.title)
+        # "!" when the song's lyrics couldn't be found, as in the Now Playing panel.
+        self.no_lyrics = lyrics_missing_mark("Lyrics aren't available at the moment")
+        title_row.append(self.no_lyrics)
+        follow_lyrics(win.app.lyrics, self, lambda view, _changed: view._sync_lyrics_mark())
         actions, self.heart, self.playlists_button = song_actions(win, self.player)
         title_row.append(actions)
         bottom.append(title_row)
@@ -263,6 +267,7 @@ class FocusView(Gtk.Overlay):
         self.artist.set_visible(playing)
         self.album.set_visible(playing)
         self.dot.set_visible(playing)
+        self._sync_lyrics_mark()
         if not playing:
             self.title.set_text("Not Playing")
             return
@@ -271,6 +276,10 @@ class FocusView(Gtk.Overlay):
         self.album.set_label(f"{track.album} · {track.year}" if track.year else track.album)
         if self._popup == "lyrics":
             self.lyrics_view.load(track)
+
+    def _sync_lyrics_mark(self):
+        """Show the "!" while the playing song is known to have no lyrics."""
+        self.no_lyrics.set_visible(self.win.app.lyrics.is_missing(self.player.current))
 
     def _goto_artist(self, *_):
         """Leave the focus view and go to the song's artist."""

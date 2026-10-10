@@ -1,7 +1,8 @@
 """Right-hand Now Playing panel. The queue button switches between the Player view
 (cover, info, time bar, controls, volume) and the Queue view (current song + Up Next).
 The lyrics and equalizer buttons flip the cover over to show the song's lyrics or its EQ.
-The focus button opens the full-window focus view (see focus_view.py).
+The focus button opens the full-window focus view (see focus_view.py). A small "!" after the
+song's title means its lyrics couldn't be found (see lyrics.py and lyrics_manager.py).
 
 When the window is too small for the library beside it, the panel fills the window in a compact
 form: no cover (the artist backdrop shows through), the song and its controls at the bottom, and
@@ -16,7 +17,7 @@ from .lyrics_view import LyricsView
 from .player_controls import PlayerControls
 from .queue_view import QueueView
 from .visualizer import WaveVisualizer
-from .widgets import CoverArt, PriorityColumn, SquareFit, song_actions
+from .widgets import CoverArt, PriorityColumn, SquareFit, follow_lyrics, lyrics_missing_mark, song_actions
 
 COVER_SIZE = 340  # cover / lyrics / equalizer card, at most
 COVER_MIN = 96  # in short windows the cover shrinks down to this before the controls move
@@ -24,7 +25,8 @@ HEADINGS = {None: "Now Playing", "queue": "Queue", "lyrics": "Lyrics", "eq": "Eq
 
 
 class SongInfo(Gtk.Box):
-    """The playing song's title, artist and album links, heart and playlists buttons."""
+    """The playing song's title (with a "!" when it has no lyrics), artist and album links,
+    heart and playlists buttons."""
 
     def __init__(self, win):
         super().__init__(spacing=6)
@@ -33,6 +35,12 @@ class SongInfo(Gtk.Box):
         titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.title = Gtk.Label(xalign=0, wrap=True, lines=2, ellipsize=3)
         self.title.add_css_class("now-title")
+        # The title, then the "!" for a song whose lyrics couldn't be found (LyricsService.missing).
+        title_row = Gtk.Box(spacing=6, halign=Gtk.Align.START)
+        title_row.append(self.title)
+        self.no_lyrics = lyrics_missing_mark("Lyrics aren't available at the moment")
+        title_row.append(self.no_lyrics)
+        follow_lyrics(win.app.lyrics, self, lambda info, _changed: info._sync_lyrics_mark())
         self.artist = Gtk.Button(halign=Gtk.Align.START, tooltip_text="Go to Artist")
         self.artist.add_css_class("flat")
         self.artist.add_css_class("artist-link")
@@ -41,7 +49,7 @@ class SongInfo(Gtk.Box):
         self.album.add_css_class("flat")
         self.album.add_css_class("album-link")
         self.album.connect("clicked", self._goto_album)
-        titles.append(self.title)
+        titles.append(title_row)
         titles.append(self.artist)
         titles.append(self.album)
         self.append(titles)
@@ -57,12 +65,17 @@ class SongInfo(Gtk.Box):
         track = self.player.current
         self.artist.set_visible(track is not None)
         self.album.set_visible(track is not None)
+        self._sync_lyrics_mark()
         if track is None:
             self.title.set_text("Not Playing")
             return
         self.title.set_text(track.title)
         self.artist.set_label(track.artist)
         self.album.set_label(f"{track.album} · {track.year}" if track.year else track.album)
+
+    def _sync_lyrics_mark(self):
+        """Show the "!" while the playing song is known to have no lyrics."""
+        self.no_lyrics.set_visible(self.win.app.lyrics.is_missing(self.player.current))
 
     def _goto_artist(self, *_):
         """Go to the playing song's artist."""

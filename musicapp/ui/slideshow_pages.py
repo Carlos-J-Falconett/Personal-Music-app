@@ -9,7 +9,7 @@ from ..art import SLIDE_SECONDS_MAX, SLIDE_SECONDS_MIN, THUMB, is_video
 from .artists_view import back_button
 from .dialogs import ask_name, confirm_delete
 from .silent_video import SilentVideo
-from .widgets import follow_compact, icon_button
+from .widgets import follow_compact, icon_button, weak_self
 
 
 def _count(n: int, word: str) -> str:
@@ -28,11 +28,15 @@ class _Page(Adw.NavigationPage):
     It rebuilds itself whenever the slideshows change, until it's detached.
 
     `host` is the SlideshowsView holding the pages: it provides .nav (the navigation view), .win
-    (the main window), .art and .toast()."""
+    (the main window), .art and .toast().
+    Pages are made afresh each time they're opened, so the handlers of the widgets they own reach
+    them through `self._me`, a weak proxy (see widgets.weak_self): callbacks passed to the helpers
+    below are written `lambda: me.method()`, never a bound method."""
 
     def __init__(self, host, title: str, tag: str, back: str | None = None, on_back=None):
         super().__init__(title=title, tag=tag)
         self.host = host
+        self._me = weak_self(self)
         self.art = host.art
         self.slideshows = host.art.slideshows
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -109,7 +113,8 @@ class _Page(Adw.NavigationPage):
                                 tooltip_text="Showing" if showing else "Show This")
         if group_with is not None:
             radio.set_group(group_with)
-        radio.connect("toggled", lambda b: b.get_active() and not self._syncing and self._pick(on_pick))
+        me = self._me
+        radio.connect("toggled", lambda b: b.get_active() and not me._syncing and me._pick(on_pick))
         row.add_prefix(radio)
         if on_open is not None:
             row.set_activatable(True)
@@ -166,7 +171,8 @@ class SlideshowsPage(_Page):
         self.box.append(heading)
         self.rows = self._boxed_list()
         self.box.append(self.rows)
-        self.box.append(self._wide_button("New Group…", "list-add-symbolic", self._new_group))
+        me = self._me
+        self.box.append(self._wide_button("New Group…", "list-add-symbolic", lambda: me._new_group()))
         self.refresh()
 
     def refresh(self):
@@ -188,7 +194,7 @@ class SlideshowsPage(_Page):
             subtitle = f"{_count(len(group.slideshows), 'slideshow')} · {_items(len(ss.group_media(group)))}"
             row, _radio = self._radio_row(group.name, subtitle, ss.is_showing(group),
                                           lambda g=group: ss.select_group(g), first,
-                                          on_open=lambda g=group: self.host.nav.push(GroupPage(self.host, g)))
+                                          on_open=lambda g=group, host=self.host: host.nav.push(GroupPage(host, g)))
             self.rows.append(row)
 
     def _new_group(self):
@@ -206,11 +212,12 @@ class GroupPage(_Page):
         super().__init__(host, group.name, f"group:{group.id}", back="Slideshows",
                          on_back=lambda: host.nav.pop_to_tag("slideshow"))
         self.group = group
-        self._header_button("user-trash-symbolic", "Delete Group", self._delete)
-        self._header_button("document-edit-symbolic", "Rename Group", self._rename)
+        me = self._me
+        self._header_button("user-trash-symbolic", "Delete Group", lambda: me._delete())
+        self._header_button("document-edit-symbolic", "Rename Group", lambda: me._rename())
         self.rows = self._boxed_list()
         self.box.append(self.rows)
-        self.box.append(self._wide_button("New Slideshow…", "list-add-symbolic", self._new_slideshow))
+        self.box.append(self._wide_button("New Slideshow…", "list-add-symbolic", lambda: me._new_slideshow()))
         self.refresh()
 
     def refresh(self):
@@ -223,13 +230,13 @@ class GroupPage(_Page):
         self.subtitle.set_text(f"Group · {_count(len(self.group.slideshows), 'slideshow')}{showing}")
         self.rows.remove_all()
         whole, first = self._radio_row("Whole Group", f"All of its slideshows · {_items(len(ss.group_media(self.group)))}",
-                                       ss.is_showing(self.group), lambda: ss.select_group(self.group), None)
+                                       ss.is_showing(self.group), lambda g=self.group: ss.select_group(g), None)
         self.rows.append(whole)
         for slideshow in self.group.slideshows:
             row, _radio = self._radio_row(slideshow.name, _items(len(ss.media(slideshow))),
                                           ss.is_showing(slideshow), lambda s=slideshow: ss.select_slideshow(s), first,
-                                          on_open=lambda s=slideshow: self.host.nav.push(
-                                              SlideshowPage(self.host, s)))
+                                          on_open=lambda s=slideshow, host=self.host: host.nav.push(
+                                              SlideshowPage(host, s)))
             self.rows.append(row)
 
     def _new_slideshow(self):
@@ -269,11 +276,12 @@ class SlideshowPage(_Page):
         super().__init__(host, slideshow.name, f"slideshow:{slideshow.id}", back=slideshow.group.name,
                          on_back=lambda: host.nav.pop())
         self.slideshow = slideshow
-        self._header_button("user-trash-symbolic", "Delete Slideshow", self._delete)
-        self._header_button("document-edit-symbolic", "Rename Slideshow", self._rename)
+        me, slideshows = self._me, self.slideshows
+        self._header_button("user-trash-symbolic", "Delete Slideshow", lambda: me._delete())
+        self._header_button("document-edit-symbolic", "Rename Slideshow", lambda: me._rename())
 
         self.show_button = self._wide_button("Show This Slideshow", "media-playback-start-symbolic",
-                                             lambda: self._pick(lambda: self.slideshows.select_slideshow(slideshow)))
+                                             lambda: me._pick(lambda: slideshows.select_slideshow(slideshow)))
         self.box.append(self.show_button)
 
         self.flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
@@ -289,10 +297,10 @@ class SlideshowPage(_Page):
 
         # Side by side, or one above the other when the page is too narrow for both.
         buttons = Adw.WrapBox(child_spacing=12, line_spacing=10, halign=Gtk.Align.CENTER, margin_top=6)
-        buttons.append(self._wide_button("Add Images or Videos…", "list-add-symbolic", self._choose))
+        buttons.append(self._wide_button("Add Images or Videos…", "list-add-symbolic", lambda: me._choose()))
         self.remove_all = Gtk.Button(label="Remove All")
         self.remove_all.add_css_class("pill")
-        self.remove_all.connect("clicked", lambda *_: self._confirm_clear())
+        self.remove_all.connect("clicked", lambda *_: me._confirm_clear())
         buttons.append(self.remove_all)
         self.box.append(buttons)
 
@@ -342,7 +350,7 @@ class SlideshowPage(_Page):
                             halign=Gtk.Align.END, valign=Gtk.Align.START, margin_top=4, margin_end=4)
         remove.add_css_class("circular")
         remove.add_css_class("slide-remove")
-        remove.connect("clicked", lambda *_: self.slideshows.remove_media(path))
+        remove.connect("clicked", lambda *_, slideshows=self.slideshows: slideshows.remove_media(path))
         overlay.add_overlay(remove)
         if is_video(path):
             # The video's first frame (a paused, silent video shows it once it's ready), plus a film badge.

@@ -16,6 +16,7 @@ from .mode_icon import ModeIcon
 from .dialogs import ask_playlist_name, confirm_delete_playlist
 from .focus_view import FocusView
 from .genres_view import GenresView
+from .lyrics_manager import LyricsDialog, LyricsDownloadButton
 from .theme_dialog import ThemeDialog
 from .now_playing import NowPlayingPanel
 from .playlists_view import PlaylistsView
@@ -74,6 +75,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.art = app.art
         self.compact_level = 0
         self._syncing_icons = False
+        # The top bar gives way when its contents don't fit (see _fit_top_bar): the labelled tabs
+        # become icons, then the search field becomes a button with its bar underneath.
+        self._tabs_squeezed = False
+        self._search_squeezed = False
+        self._fit_source = 0
         self._last_arrow = (0, 0.0)  # (direction, when) of the last slideshow arrow press
 
         db = self.library.db
@@ -111,6 +117,9 @@ class MainWindow(Adw.ApplicationWindow):
                                    empty_title="No Music Found",
                                    empty_description=f"Add songs to {self.app.music_dir} and they'll appear here",
                                    queue_source="library")  # hiding an artist takes them out of its queue
+        # Get Lyrics: downloads lyrics for the whole library (the Missing Lyrics dialog uses it too).
+        self.lyrics_button = LyricsDownloadButton(self)
+        self.songs_page.header_actions.append(self.lyrics_button)
         self.artists_page = ArtistsView(self)
         self.genres_page = GenresView(self)  # songs grouped by genre, without hidden artists
         self.favorites_page = SongList(self, title="Favorites", empty_icon="musicapp-heart-outline-symbolic",
@@ -175,6 +184,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._tab_buttons: dict[str, Gtk.ToggleButton] = {}
         for name, icon, title in TAB_ICONS:
             button = Gtk.ToggleButton(icon_name=icon, tooltip_text=title, valign=Gtk.Align.CENTER)
+            button.update_property([Gtk.AccessibleProperty.LABEL], [title])  # icon only: name it for screen readers
             button.add_css_class("flat")
             button.add_css_class("tab-icon")
             if self._tab_buttons:
@@ -191,6 +201,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.app_menu.connect("show", lambda *_: self._fill_app_menu())
         menu_button = Gtk.MenuButton(child=ModeIcon(self.art), tooltip_text="Main Menu",
                                      popover=self.app_menu, primary=True)
+        menu_button.update_property([Gtk.AccessibleProperty.LABEL], ["Main Menu"])
         # Black Hole mode: double-clicking the icon leaves it. A single click opens the menu once
         # it's clear no second click is coming.
         self._menu_button = menu_button
@@ -204,6 +215,7 @@ class MainWindow(Adw.ApplicationWindow):
         # Phone-sized windows: the search field moves to a bar under the top bar, opened by this.
         self.search_button = Gtk.ToggleButton(icon_name="system-search-symbolic", tooltip_text="Search (Ctrl+F)",
                                               visible=False)
+        self.search_button.update_property([Gtk.AccessibleProperty.LABEL], ["Search"])
         header.pack_end(self.search_button)
         self.search_bar = Gtk.SearchBar()
         self.search_button.bind_property("active", self.search_bar, "search-mode-enabled",
@@ -283,6 +295,11 @@ class MainWindow(Adw.ApplicationWindow):
         page.add_item("image-x-generic-symbolic", "Artist Images…", lambda: act("win.artist-images", None))
         page.add_switch("view-conceal-symbolic", "Hide Interface", self.ui_hidden, self.set_ui_hidden,
                         accel="<Control>h")
+        # Lyrics: the songs whose lyrics couldn't be found, and adding them from local files.
+        page.add_section("Lyrics")
+        missing = len(self.app.lyrics.missing_tracks(self.library.items.values()))
+        page.add_item("musicapp-lyrics-symbolic", "Missing Lyrics…", lambda: act("win.lyrics", None),
+                      detail=f"{missing:,}" if missing else None)
         if turned:
             page.add_section("Black Hole")
             page.add_switch("media-playlist-repeat-symbolic", "Slideshow", self.art.slideshow_enabled,
@@ -350,19 +367,22 @@ class MainWindow(Adw.ApplicationWindow):
             # so put back the one the user dragged to.
             GLib.idle_add(self._apply_panel_width)
         if level != self.compact_level:
-            self._place_search(phone=level == 2)
+            self._place_search(in_bar=level == 2 or self._search_squeezed)
             # Phone-sized: tighter buttons and headers (style.css), so everything still fits.
             (self.add_css_class if level == 2 else self.remove_css_class)("phone")
             self.compact_level = level
             self.emit("compact-changed", level)
+        self._queue_fit_top_bar()
 
     def _narrow_condition(self) -> str:
         """The breakpoint below which the library no longer fits beside the Now Playing panel."""
         return f"max-width: {self._panel_width + CONTENT_MIN_WIDTH + PANEL_CHROME}px"
 
-    def _place_search(self, phone: bool):
-        """Phone-sized windows: the search field lives in a bar under the top bar (opened by the
-        search button or by typing); otherwise at the end of the top bar."""
+    def _place_search(self, in_bar: bool):
+        """Phone-sized windows, or a top bar too full for it (_fit_top_bar): the search field lives
+        in a bar under the top bar (opened by the search button or by typing); otherwise at the end
+        of the top bar."""
+        phone = in_bar
         in_bar = self.search_entry.get_parent() is not self.header and self.search_bar.get_child() is not None
         if phone == in_bar:
             return
@@ -392,6 +412,96 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             self.search_entry.set_key_capture_widget(target)
 
+    # ---- fitting the top bar ----
+
+    def do_size_allocate(self, width, height, baseline):
+        """After every layout, check that the top bar still fits (see _fit_top_bar)."""
+        Adw.ApplicationWindow.do_size_allocate(self, width, height, baseline)
+        self._queue_fit_top_bar()
+
+    def _queue_fit_top_bar(self):
+        """Run _fit_top_bar once the current layout is done (it may change the layout)."""
+        if not self._fit_source:
+            self._fit_source = GLib.idle_add(self._fit_top_bar)
+
+    def _fit_top_bar(self):
+        """Keep every top-bar control fully on screen, whatever the tab count (Black Hole mode adds
+        Slideshows), label lengths or font size. The labelled tabs show only with room for their
+        whole labels (squeezed, they'd read "…"), otherwise icons; if the bar still needs more than
+        the window's width, the search field becomes a search button with its bar underneath.
+        Each comes back once it fits again, worked out exactly (so it never flips back and forth)."""
+        self._fit_source = 0
+        # The window's width, not the bar's: GTK gives the bar at least its minimum width even
+        # when that's wider than the window (the overflow is simply cut off at the window's edge).
+        width = self.get_width()
+        if width <= 0 or not self.header.get_mapped():
+            return False
+        horizontal = Gtk.Orientation.HORIZONTAL
+        need = self.header.measure(horizontal, -1)[0]
+        tabs_part = self.title_stack.measure(horizontal, -1)[0]
+        wide = self.compact_level == 0
+        # The bar's width with the labelled tabs showing their whole labels, in place of what the
+        # title shows now.
+        labels_need = need - tabs_part + self._switcher_full_width()
+        entry_width = self.search_entry.measure(horizontal, -1)[0]
+        button_width = self.search_button.measure(horizontal, -1)[0] or 34
+
+        if wide and not self._tabs_squeezed and labels_need > width:
+            self._tabs_squeezed = True  # labels would be cut short: icons instead
+        elif need > width:
+            # Too full: give way one step (the next layout checks again).
+            if wide and not self._tabs_squeezed:
+                self._tabs_squeezed = True
+            elif not self._search_squeezed and self.compact_level < 2:
+                self._search_squeezed = True
+            else:
+                return False
+        else:
+            # Room to spare? Bring back the search field first, then the labelled tabs.
+            if self._search_squeezed and self.compact_level < 2 \
+                    and need - button_width + entry_width <= width:
+                self._search_squeezed = False
+            elif wide and self._tabs_squeezed and not self._search_squeezed and labels_need <= width:
+                self._tabs_squeezed = False
+            else:
+                return False
+        self._apply_top_bar_fit()
+        return False
+
+    def _switcher_full_width(self) -> int:
+        """The width the labelled tabs need so no label is cut short: their minimum (labels
+        shortened to "…") plus, for each tab, the most any label needs beyond its shortest.
+        (The tabs are all as wide as the widest, so each gets that much more.)"""
+        horizontal = Gtk.Orientation.HORIZONTAL
+        tabs = [t for t in self._switcher_buttons() if t.get_visible()]
+        extra = 0
+        for tab in tabs:
+            pending = [tab]
+            while pending:
+                widget = pending.pop()
+                if isinstance(widget, Gtk.Label):
+                    low, full = widget.measure(horizontal, -1)[:2]
+                    extra = max(extra, full - low)
+                child = widget.get_first_child()
+                while child is not None:
+                    pending.append(child)
+                    child = child.get_next_sibling()
+        return self.switcher.measure(horizontal, -1)[0] + extra * len(tabs)
+
+    def _switcher_buttons(self):
+        """The labelled tabs' buttons (the view switcher's children)."""
+        child = self.switcher.get_first_child()
+        while child is not None:
+            yield child
+            child = child.get_next_sibling()
+
+    def _apply_top_bar_fit(self):
+        """Show the tabs and search the way _fit_top_bar chose (the breakpoints set the rest)."""
+        if self.compact_level == 0:
+            self.title_stack.set_visible_child_name("icons" if self._tabs_squeezed else "tabs")
+        self._place_search(in_bar=self.compact_level == 2 or self._search_squeezed)
+        self._sync_tab_icons()
+
     # ---- top bar icons (small windows) ----
 
     def _on_tab_icon(self, button, name):
@@ -407,7 +517,9 @@ class MainWindow(Adw.ApplicationWindow):
             self._hide_overlay_panel()
 
     def _sync_tab_icons(self):
-        """Keep the top-bar icons in step with what's showing."""
+        """Keep the top-bar icons in step with what's showing. The Now Playing icon shows only
+        while the panel isn't docked (icons can also show on wide windows: see _fit_top_bar)."""
+        self._tab_buttons["now"].set_visible(self.split.get_collapsed())
         showing_panel = self.split.get_collapsed() and self.split.get_show_sidebar()
         name = "now" if showing_panel else self.view_stack.get_visible_child_name()
         button = self._tab_buttons.get(name)
@@ -487,6 +599,7 @@ class MainWindow(Adw.ApplicationWindow):
         add("toggle-eq", lambda *_: self._toggle_eq())
         add("artist-images", lambda *_: self.show_artist_images())
         add("themes", lambda *_: ThemeDialog(self).present(self))
+        add("lyrics", lambda *_: LyricsDialog(self).present(self))
         add("focus-mode", lambda *_: self.set_focus_mode(not self.focus_mode))
         add("hide-ui", lambda *_: self.set_ui_hidden(not self.ui_hidden))
         add("slideshow-repeat", lambda *_: self.set_slide_repeat(not self.backdrop.repeating))

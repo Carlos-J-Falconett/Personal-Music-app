@@ -9,6 +9,7 @@ from gi.repository import Adw, Gdk, GLib, Gtk
 
 from ..themes import (COLORS, DEFAULT_NAME, GROUPS, REQUIRED, Theme, default_theme, effective, normalize_hex,
                       to_hex, to_rgb)
+from .widgets import weak_self
 
 
 class Swatch(Gtk.DrawingArea):
@@ -18,7 +19,7 @@ class Swatch(Gtk.DrawingArea):
         super().__init__(content_width=size, content_height=size, valign=Gtk.Align.CENTER)
         self._rgb = to_rgb(color) if color else None
         self._auto = False
-        self.set_draw_func(self._draw)
+        self.set_draw_func(Swatch._draw)  # static: a bound method here would keep the swatch alive
 
     def set_color(self, color: str | None, auto: bool = False):
         """auto: the colour is only followed, not set; drawn smaller inside a dashed ring."""
@@ -27,8 +28,10 @@ class Swatch(Gtk.DrawingArea):
             self._rgb, self._auto = rgb, auto
             self.queue_draw()
 
-    def _draw(self, _area, cr, width, height):
-        """Draw the dot (and, for Auto colours, a smaller dot in a dashed ring)."""
+    @staticmethod
+    def _draw(self, cr, width, height):
+        """Draw the dot (and, for Auto colours, a smaller dot in a dashed ring). `self` is the swatch
+        being drawn (GTK passes the area first)."""
         r = min(width, height) / 2 - 1
         cr.arc(width / 2, height / 2, r - (3 if self._auto else 0), 0, 2 * math.pi)
         if self._rgb is None:
@@ -50,6 +53,7 @@ class ThemeDialog(Adw.Dialog):
     def __init__(self, win):
         super().__init__(title="Themes", content_width=460, content_height=640)
         self.win = win
+        me = weak_self(self)  # for handlers of widgets this owns (see widgets.weak_self)
         self.themes = win.app.themes
 
         self.toasts = Adw.ToastOverlay()
@@ -59,7 +63,7 @@ class ThemeDialog(Adw.Dialog):
 
         # ---- list page ----
         new_button = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="New Theme")
-        new_button.connect("clicked", lambda *_: self.edit(None, start_from=self.themes.get(self.themes.active)))
+        new_button.connect("clicked", lambda *_: me.edit(None, start_from=me.themes.get(me.themes.active)))
         header = Adw.HeaderBar()
         header.pack_start(new_button)
         self.group = Adw.PreferencesGroup(title="Color Theme",
@@ -94,6 +98,7 @@ class ThemeDialog(Adw.Dialog):
 
     def _reload(self):
         """Rebuild the theme list (each with its colour swatches and buttons)."""
+        me = weak_self(self)  # for handlers of widgets this owns (see widgets.weak_self)
         for row in self._rows:
             self.group.remove(row)
         self._rows = []
@@ -105,7 +110,7 @@ class ThemeDialog(Adw.Dialog):
                 first_check = check
             else:
                 check.set_group(first_check)
-            check.connect("toggled", lambda b, name=theme.name: self._select(name) if b.get_active() else None)
+            check.connect("toggled", lambda b, name=theme.name: me._select(name) if b.get_active() else None)
             row.add_prefix(check)
             row.set_activatable_widget(check)
 
@@ -116,12 +121,12 @@ class ThemeDialog(Adw.Dialog):
             if theme.is_default:
                 row.set_subtitle("The original look")
                 row.add_suffix(self._icon_button("edit-copy-symbolic", "Duplicate",
-                                                 lambda *_, t=theme: self.edit(None, start_from=t)))
+                                                 lambda *_, t=theme: me.edit(None, start_from=t)))
             else:
                 row.add_suffix(self._icon_button("document-edit-symbolic", "Edit",
-                                                 lambda *_, t=theme: self.edit(t)))
+                                                 lambda *_, t=theme: me.edit(t)))
                 row.add_suffix(self._icon_button("user-trash-symbolic", "Delete",
-                                                 lambda *_, t=theme: self._confirm_delete(t)))
+                                                 lambda *_, t=theme: me._confirm_delete(t)))
             self.group.add(row)
             self._rows.append(row)
 
@@ -169,6 +174,7 @@ class ThemeEditor(Adw.NavigationPage):
     def __init__(self, dialog: ThemeDialog, theme: Theme | None, source: Theme):
         super().__init__(title="Edit Theme" if theme else "New Theme", tag="editor")
         self.dialog = dialog
+        me = weak_self(self)  # for handlers of widgets this owns (see widgets.weak_self)
         self.themes = dialog.themes
         self.original = theme  # None for a new theme
         self._saved = False
@@ -176,7 +182,7 @@ class ThemeEditor(Adw.NavigationPage):
 
         self.save_button = Gtk.Button(label="Save")
         self.save_button.add_css_class("suggested-action")
-        self.save_button.connect("clicked", lambda *_: self._save())
+        self.save_button.connect("clicked", lambda *_: me._save())
         header = Adw.HeaderBar()
         header.pack_end(self.save_button)
 
@@ -187,7 +193,7 @@ class ThemeEditor(Adw.NavigationPage):
             self.name_row.set_text(theme.name)
         else:
             self.name_row.set_text(self._unique_name(f"{source.name} Copy" if not source.is_default else "My Theme"))
-        self.name_row.connect("changed", lambda *_: self._validate())
+        self.name_row.connect("changed", lambda *_: me._validate())
         name_group.add(self.name_row)
         page.add(name_group)
 
@@ -219,7 +225,8 @@ class ThemeEditor(Adw.NavigationPage):
                 clear = Gtk.Button(icon_name="edit-clear-symbolic", tooltip_text="Back to Auto",
                                    valign=Gtk.Align.CENTER)
                 clear.add_css_class("flat")
-                clear.connect("clicked", lambda _b, r=row: r.set_text(""))
+                # The row is found from the button: capturing it would keep the row alive (weak_self).
+                clear.connect("clicked", lambda b: b.get_ancestor(Adw.EntryRow).set_text(""))
                 row.add_suffix(auto)
                 row.add_suffix(clear)
                 self._auto_labels[key] = (auto, clear)
@@ -233,7 +240,7 @@ class ThemeEditor(Adw.NavigationPage):
         reset_group = Adw.PreferencesGroup()
         reset = Gtk.Button(label="Reset to Default Colors", halign=Gtk.Align.CENTER)
         reset.add_css_class("pill")
-        reset.connect("clicked", lambda *_: self._fill(default_theme().colors))
+        reset.connect("clicked", lambda *_: me._fill(default_theme().colors))
         reset_group.add(reset)
         page.add(reset_group)
 
@@ -245,15 +252,16 @@ class ThemeEditor(Adw.NavigationPage):
 
     def _color_row(self, key, label, desc):
         """A colour row: hex entry, with a swatch button that opens the colour picker."""
+        me = weak_self(self)  # for handlers of widgets this owns (see widgets.weak_self)
         row = Adw.EntryRow(title=GLib.markup_escape_text(label), tooltip_text=desc)
         swatch = Swatch(size=18)
         # The swatch is also a button that opens the colour picker for this row.
         pick = Gtk.Button(child=swatch, tooltip_text=f"Pick a Color for {label}", valign=Gtk.Align.CENTER)
         pick.add_css_class("flat")
         pick.add_css_class("circular")
-        pick.connect("clicked", lambda _b: self._pick(key, label))
+        pick.connect("clicked", lambda _b: me._pick(key, label))
         row.add_prefix(pick)
-        row.connect("changed", lambda *_: self._validate())
+        row.connect("changed", lambda *_: me._validate())
         self.rows[key] = (row, swatch)
         return row, swatch
 

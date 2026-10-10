@@ -10,7 +10,7 @@ from ..library import format_total
 from .artists_view import back_button, grid_scroller, play_buttons
 from .cards import GenreCard
 from .song_list import SongList
-from .widgets import NarrowColumn
+from .widgets import NarrowColumn, weak_self
 
 ROOT_TAG = "genres"
 
@@ -93,6 +93,7 @@ class GenrePage(Adw.NavigationPage):
         self.view = view
         self.win = view.win
         self.genre = genre
+        me = weak_self(self)  # for handlers of widgets this page owns (see weak_self)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(back_button("Genres", lambda: view.nav.pop_to_tag(ROOT_TAG)))
@@ -104,7 +105,7 @@ class GenrePage(Adw.NavigationPage):
         title.add_css_class("page-title")
         self.subtitle = Gtk.Label(xalign=0)
         self.subtitle.add_css_class("page-subtitle")
-        buttons = play_buttons(lambda: self.songs.play_all(False), lambda: self.songs.play_all(True))
+        buttons = play_buttons(lambda: me.songs.play_all(False), lambda: me.songs.play_all(True))
         buttons.set_margin_top(8)
         buttons.set_halign(Gtk.Align.START)
         for w in (kind, title, self.subtitle, buttons):

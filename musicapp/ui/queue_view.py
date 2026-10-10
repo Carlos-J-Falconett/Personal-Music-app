@@ -24,16 +24,20 @@ class UpNextEntry(GObject.Object):
 
 class QueueView(Gtk.Box):
     """The play queue: the playing song, then Up Next (click to play, drag to reorder, × to remove,
-    Clear). Used by the Now Playing panel and the focus view."""
+    Clear). Used by the Now Playing panel and the focus view.
+    It follows the player only while it's on screen: when hidden it just notes that it's out of
+    date, and catches up when it's shown again (a big queue has hundreds of rows to rebuild)."""
 
     def __init__(self, win):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         self.win = win
         self.player = win.player
+        self._stale = False  # the player changed while this was hidden
         self.append(self._build_queue_view())
-        self.player.connect("track-changed", lambda *_: self._sync())
-        self.player.connect("queue-changed", lambda *_: self._sync())
-        self.player.connect("modes-changed", lambda *_: self._sync())  # Repeat Queue changes Up Next
+        self.player.connect("track-changed", lambda *_: self._sync_if_shown())
+        self.player.connect("queue-changed", lambda *_: self._sync_if_shown())
+        self.player.connect("modes-changed", lambda *_: self._sync_if_shown())  # Repeat Queue changes Up Next
+        self.connect("map", lambda *_: self._sync() if self._stale else None)
         self._sync()
 
     def _build_queue_view(self):
@@ -106,7 +110,10 @@ class QueueView(Gtk.Box):
 
     def _setup_row(self, _f, li):
         """An Up Next row: drag handle, cover, title and artist, length, remove button; it is both a
-        drag source and a drop target."""
+        drag source and a drop target.
+        The row's handlers find the row through their widget (never by capturing `row`): a handler
+        holding the row it belongs to would keep it alive after the list drops it (see
+        widgets.weak_self), with its cover and entry."""
         row = Gtk.Box(spacing=10, margin_top=2, margin_bottom=2)
         row.add_css_class("queue-row")
         handle = Gtk.Image(icon_name="list-drag-handle-symbolic")
@@ -125,22 +132,22 @@ class QueueView(Gtk.Box):
         duration.add_css_class("number-cell")
         duration.add_css_class("queue-duration")
         remove = icon_button("window-close-symbolic", "Remove from Queue", circular=True)
-        remove.connect("clicked", lambda b: self.player.remove_from_queue(row._entry.queue_index)
-                       if row._entry else None)
+        remove.connect("clicked", lambda b: self.player.remove_from_queue(b.get_parent()._entry.queue_index)
+                       if b.get_parent()._entry else None)
         for w in (handle, cover, labels, duration, remove):
             row.append(w)
         row._widgets = (handle, cover, title, artist, duration)
         row._entry = None
 
         drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
-        drag.connect("prepare", lambda src, x, y: Gdk.ContentProvider.new_for_value(
-            f"{QUEUE_DND_PREFIX}{row._entry.queue_index}") if row._entry and not row._entry.wrapped else None)
-        drag.connect("drag-begin", lambda src, d: src.set_icon(Gtk.WidgetPaintable.new(row), 20, 20))
+        drag.connect("prepare", QueueView._drag_content)
+        drag.connect("drag-begin", lambda src, d: src.set_icon(Gtk.WidgetPaintable.new(src.get_widget()), 20, 20))
         row.add_controller(drag)
         drop = Gtk.DropTarget.new(str, Gdk.DragAction.MOVE)
-        drop.connect("enter", lambda *_: (row.add_css_class("drop-target"), Gdk.DragAction.MOVE)[1])
-        drop.connect("leave", lambda *_: row.remove_css_class("drop-target"))
-        drop.connect("drop", self._on_drop, row)
+        drop.connect("enter", lambda target, *_: (target.get_widget().add_css_class("drop-target"),
+                                                  Gdk.DragAction.MOVE)[1])
+        drop.connect("leave", lambda target: target.get_widget().remove_css_class("drop-target"))
+        drop.connect("drop", self._on_drop)
         row.add_controller(drop)
         li.set_child(row)
 
@@ -158,8 +165,17 @@ class QueueView(Gtk.Box):
         handle.set_opacity(0 if entry.wrapped else 1)
         row.set_tooltip_text("Plays again when the queue repeats" if entry.wrapped else None)
 
-    def _on_drop(self, _target, value, _x, _y, row):
+    @staticmethod
+    def _drag_content(source, _x, _y):
+        """Dragging a row: its queue position, unless it's a wrapped-around (Repeat Queue) song."""
+        entry = source.get_widget()._entry
+        if entry is None or entry.wrapped:
+            return None
+        return Gdk.ContentProvider.new_for_value(f"{QUEUE_DND_PREFIX}{entry.queue_index}")
+
+    def _on_drop(self, target, value, _x, _y):
         """A row was dropped onto this one: move it to this position."""
+        row = target.get_widget()
         row.remove_css_class("drop-target")
         entry = row._entry
         if not isinstance(value, str) or not value.startswith(QUEUE_DND_PREFIX) or entry is None or entry.wrapped:
@@ -167,8 +183,16 @@ class QueueView(Gtk.Box):
         self.player.move_in_queue(int(value[len(QUEUE_DND_PREFIX):]), entry.queue_index)
         return True
 
+    def _sync_if_shown(self):
+        """The player changed: rebuild now if on screen, otherwise when shown again."""
+        if self.get_mapped():
+            self._sync()
+        else:
+            self._stale = True
+
     def _sync(self):
         """Rebuild from the player's queue."""
+        self._stale = False
         track = self.player.current
         self.card_cover.set_track(track)
         if track is None:

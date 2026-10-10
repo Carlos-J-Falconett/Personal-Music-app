@@ -28,6 +28,7 @@ window.main-window {
   --library-background-color: var(--panel-color);
   --page-title-color: var(--text);
   --page-subtitle-color: var(--secondary-text-color);
+  --page-label-color: alpha(var(--secondary-text-color), 0.655);
   --column-headers-color: alpha(var(--secondary-text-color), 0.655);
   --play-all-color: var(--accent-bg-color);
   --play-all-text-color: var(--accent-fg-color);
@@ -45,6 +46,9 @@ window.main-window {
   --artist-name-color: var(--text);
   --album-title-color: var(--text);
   --card-details-color: alpha(var(--text), 0.6);
+  --genre-name-color: var(--text);
+  --artist-page-buttons-color: var(--text);
+  --artist-hidden-button-color: var(--accent-color);
   --playlist-name-color: var(--text);
   --playlist-details-color: alpha(var(--text), 0.55);
   --playlist-rows-color: var(--card-bg-color);
@@ -106,6 +110,15 @@ window.main-window {
   --stats-heatmap-color: var(--accent-bg-color);  /* the heatmap is drawn in code: see themes.color */
   --stats-empty-day-color: alpha(var(--text), 0.12);
   --stats-genre-bar-color: var(--accent-bg-color);
+  --stats-genre-track-color: var(--text);
+  --lyrics-mark-color: #f5c211;
+  --lyrics-mark-text-color: #1a1a1a;
+  --lyrics-download-color: var(--highlight-color);
+  --lyrics-download-text-color: var(--text);
+  --lyrics-manager-title-color: var(--text);
+  --lyrics-manager-details-color: var(--secondary-text-color);
+  --lyrics-add-color: var(--accent-bg-color);
+  --lyrics-add-text-color: var(--accent-fg-color);
   /* Derived tones. */
   --surface: alpha(var(--panel-color), 0.74);
   --surface-strong: alpha(var(--panel-color), 0.86);
@@ -222,11 +235,22 @@ window.main-window overlay-split-view > widget.background {
   background-color: alpha(var(--tab-selected-color), 0.11);
 }
 
-/* Phone-sized windows: slimmer tab icons, so the whole top bar fits in 400px, even with the
-   seventh icon (Slideshows) of Black Hole mode. */
+/* Phone-sized windows: slimmer tab icons (and menu button, below), so the whole top bar fits in
+   the narrowest window (400px) even with all eight icons of Black Hole mode (seven tabs, among
+   them Genres and Slideshows, plus Now Playing). The window checks this after every layout and
+   gives way if a larger font still makes it too wide (MainWindow._fit_top_bar). */
 window.main-window.phone .tab-icons button.tab-icon {
-  min-width: 28px;
+  min-width: 26px;
   padding: 0 2px;
+}
+
+window.main-window.phone .tab-icons {
+  padding: 2px;
+}
+
+window.main-window.phone headerbar menubutton > button {
+  min-width: 34px;
+  min-height: 34px;
 }
 
 .tab-icons {
@@ -397,7 +421,7 @@ window.main-window.phone button.pill {
   font-size: 0.72em;
   font-weight: 800;
   letter-spacing: 0.12em;
-  color: var(--faint);
+  color: var(--page-label-color);
 }
 
 .dim {
@@ -758,8 +782,22 @@ window.main-window avatar {
 }
 
 .artist-name,
-.album-title {
+.album-title,
+.genre-name {
   font-weight: 700;
+}
+
+.genre-name {
+  color: var(--genre-name-color);
+}
+
+/* The Hide and Change Image buttons on an artist's page; Hide stays lit while the artist is hidden. */
+.artist-page-button {
+  color: var(--artist-page-buttons-color);
+}
+.artist-page-button:checked {
+  color: var(--artist-hidden-button-color);
+  background-color: alpha(var(--artist-hidden-button-color), 0.15);
 }
 
 .artist-name {
@@ -1076,6 +1114,62 @@ row:hover .queue-row image.dim {
   color: var(--lyrics-messages-color);
 }
 
+/* ---- missing lyrics: the "!" mark, Get Lyrics and the Missing Lyrics dialog (lyrics_manager.py) ---- */
+/* The small round "!" after songs (Now Playing, focus view) and artists without lyrics. */
+.lyrics-missing-mark {
+  min-width: 16px;
+  min-height: 16px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  color: var(--lyrics-mark-text-color);
+  background-color: var(--lyrics-mark-color);
+  box-shadow: 0 1px 4px alpha(black, 0.3);
+}
+
+/* Get Lyrics (All Songs: round while idle, a pill while it runs) and Search Online Again (the
+   dialog): faint, like Shuffle. */
+window.main-window button.lyrics-download {
+  color: var(--lyrics-download-text-color);
+  background-color: alpha(var(--lyrics-download-color), 0.06);
+}
+
+window.main-window button.circular.lyrics-download {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+window.main-window button.lyrics-download:hover {
+  background-color: alpha(var(--lyrics-download-color), 0.11);
+}
+
+/* The Add… buttons of the Missing Lyrics dialog (and its Get Lyrics button). */
+window.main-window button.pill.lyrics-add {
+  color: var(--lyrics-add-text-color);
+  background-color: var(--lyrics-add-color);
+}
+
+window.main-window button.pill.lyrics-add:hover {
+  background-color: mix(var(--lyrics-add-color), white, 0.1);
+}
+
+.lyrics-manager-title {
+  color: var(--lyrics-manager-title-color);
+  font-weight: 600;
+}
+
+.lyrics-manager-details {
+  color: var(--lyrics-manager-details-color);
+}
+
+/* A song row while a lyrics file is dragged over it. */
+.lyrics-manager-row.drop-target {
+  border-radius: var(--radius-small);
+  box-shadow: inset 0 0 0 2px var(--lyrics-add-color);
+}
+
 /* ---- equalizer (back of the Now Playing card) ---- */
 .eq-card label,
 .eq-card button,
@@ -1358,7 +1452,7 @@ window.main-window.phone .stats-card-value {
 .stats-genre-bar trough {
   min-height: 6px;
   border-radius: 3px;
-  background-color: alpha(var(--text), 0.1);
+  background-color: alpha(var(--stats-genre-track-color), 0.1);
 }
 .stats-genre-bar progress {
   min-height: 6px;

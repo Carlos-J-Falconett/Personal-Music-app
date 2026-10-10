@@ -33,6 +33,11 @@ translucent "glass" panels.
   what comes around again.
 - **Lyrics** from the song's tags, a `.lrc`/`.txt` file next to it, or [LRCLIB](https://lrclib.net).
   Synced lyrics follow the song, and clicking a line jumps there.
+- **Lyrics for the whole library:** the round lyrics button on All Songs (**Get Lyrics**) downloads
+  lyrics for every song at once. Songs whose lyrics can't be found get a small yellow **"!"** next
+  to their title in Now Playing, and their artists get the same mark in the Artists tab (hover it
+  to see how many songs are missing lyrics). **Missing Lyrics…** in the main menu lists those songs
+  and lets you add their lyrics from a `.lrc` or `.txt` file you downloaded.
 - **Per-song equalizer** (10 bands, presets). Each song remembers its own EQ.
 - **Focus view:** the whole window becomes Now Playing, with Queue / Lyrics / Equalizer pop-ups.
 - **Colour themes:** make your own from hex colours, for the basics or for any single element,
@@ -111,9 +116,28 @@ changed files are read.
   album or genre to open it, or a song to play the ranking from it.
   Listening is recorded from the first launch of this version on; nothing before that is known.
 - **Main menu** (the Sun icon, top left): new playlist, rescan, Themes…, Artist Images…,
-  keyboard shortcuts, About, Quit.
+  Missing Lyrics…, keyboard shortcuts, About, Quit.
+- **Getting lyrics for everything:** on All Songs, click the round lyrics button beside Play and
+  Shuffle. It shows its progress ("34 / 210") while it works; click it again to stop. A message
+  sums it up at the end (found, missing, and songs LRCLIB couldn't be reached for). Every song in
+  the library is checked, including hidden artists'. Songs also get checked one by one as you
+  open their lyrics.
+- **The "!" mark:** a small yellow circle with "!" means lyrics couldn't be found. Next to the
+  song's title in Now Playing (and the focus view) it says *Lyrics aren't available at the
+  moment*; next to an artist's name (their card in the Artists tab and their page) it counts the
+  songs without lyrics. Instrumentals and songs that couldn't be checked (no connection) aren't
+  marked.
+- **Missing Lyrics…** (main menu, **Lyrics** section; the number beside it is how many songs are
+  missing lyrics): a searchable list of every song without lyrics, with its cover, artist and
+  album. Click a song or its **Add…** button and pick a `.lrc` (synced) or `.txt` (plain) file,
+  or drop the file straight onto the song. It leaves the list at once, and the marks go away.
+  **Search Online Again** asks LRCLIB once more for every song in the list. Lyrics you add are
+  copied into the app's lyrics folder; your music folder is never touched.
 - **Themes:** pick a theme, or create one. Basic colours are required. Every element (tabs, song
-  titles, sliders, lyrics, …) can have its own colour, or stay on **Auto** to follow the basics.
+  titles, sliders, lyrics, genre names, the artist page's Hide button, the Genres ranking bars, …)
+  can have its own colour, or stay on **Auto** to follow the basics. The **Missing Lyrics** group
+  colours the "!" mark, the Get Lyrics / Search Online Again buttons, and the Missing Lyrics
+  dialog's song names, details and Add… buttons.
 - **Artist images:** in Artist Images…, pick an artist and choose a picture. The app keeps its
   own copy. Without one, the app uses a MusicBee picture (`MusicBee/Artist Pictures` in the
   music folder) if there is one, else the artist's album cover.
@@ -147,7 +171,8 @@ changed files are read.
 | What | Where |
 |---|---|
 | Library, favorites, playlists, per-song EQ, listening history, settings (including hidden artists) | `~/.local/share/musicappv5/library.db` (SQLite) |
-| Cached online lyrics | `~/.local/share/musicappv5/lyrics/` |
+| Cached online lyrics, and lyrics you added in Missing Lyrics… | `~/.local/share/musicappv5/lyrics/` |
+| Which songs have no lyrics | `~/.local/share/musicappv5/lyrics-missing.json` |
 | Your artist images (copies) | `~/.local/share/musicappv5/artist-images/` |
 | Scaled covers and images (safe to delete) | `~/.cache/musicappv5/covers/` |
 
@@ -194,12 +219,13 @@ the genre was recorded got their song's genre filled in once, when this version 
 
 The Stats page reads the database only while it's showing. The heatmap is drawn with cairo in the
 theme's "Listening Days" colour; the Stats theme group also colours the number cards, empty
-days and the Genres ranking's bars ("Genre Bars").
+days and the Genres ranking's bars ("Genre Bars", "Genre Bar Tracks").
 
 **Pictures** (`art.py`). Covers and artist images are scaled once on worker threads and cached on
 disk per size: 128 px thumbnails, 512 px large covers, and a full-window 2560 px image with a
 blurred copy for the background. The UI asks for a picture and gets a texture back on the main
-thread.
+thread. In memory, the last four full-window images are kept, and the other textures up to 64 MB
+(least recently used dropped first; a dropped one reloads quickly from the disk cache).
 
 **The window** (`ui/window.py`). Layers from the back: the backdrop (`ui/backdrop.py`), then the
 header bar, the library pages and the Now Playing panel. `Adw.Breakpoint`s switch between three
@@ -209,14 +235,50 @@ layouts:
 - **Narrow:** the panel fills the window, and the tabs become icons.
 - **Phone-sized:** search moves into its own bar and everything is tighter.
 
+The top bar also checks after every layout that everything in it fits the window
+(`MainWindow._fit_top_bar`), whatever the number of tabs (Black Hole mode adds Slideshows), the
+label lengths or the font size. The tabs show their names only when every label fits whole
+(from about 1,290 px wide, or 1,440 px in Black Hole mode); otherwise they're icons, with their
+names as tooltips and for screen readers. When even that is too wide, the search field becomes a
+search button that opens the search bar underneath. Everything comes back as soon as it fits
+again. So every button, the menu and the window's close button stay on screen at every size down
+to the smallest window (400 px), in both modes.
+
 **Lyrics** (`lyrics.py`) are looked up on worker threads in this order: tags, then a sidecar
 file, then the disk cache, then LRCLIB. "Not found" answers are cached for a week, and network
-errors aren't cached.
+errors aren't cached. When LRCLIB's full lookup is too busy (HTTP 5xx), its search still gets a
+chance; a "not found" then isn't cached, so the song is asked about again later.
+
+The lyrics service also keeps the set of songs whose lookup found nothing (saved in
+`lyrics-missing.json`, so the marks survive a restart); finding lyrics, or an instrumental, takes
+a song out of it, and a network error leaves it as it was. Views follow its changes through
+`LyricsService.listeners` (`widgets.follow_lyrics` holds them weakly). **Get Lyrics** runs
+`download_all` on its own worker thread, so songs you open meanwhile don't wait, and announces
+changes at most once a second. Lyrics added from a file (`add_from_file`) go into the disk cache
+with the source `manual` and never expire. The button and the Missing Lyrics dialog are in
+`ui/lyrics_manager.py`.
 
 **Themes** (`themes.py`) are sets of hex colours turned into CSS variables and loaded over
 `style.css` with a higher priority. The Default theme adds nothing.
 
 **MPRIS** (`mpris.py`) publishes `org.mpris.MediaPlayer2.musicappv5` on the session bus.
+Announcing a change works out only the properties that changed.
+
+**Memory and speed.** Measured with a test harness that repeats every part of the UI in rounds;
+memory stays flat from round to round.
+- *Pages don't hold themselves.* Artist, Album, Genre, Playlist and slideshow pages, song lists and
+  dialogs are made afresh each time they open. A signal handler that used the page (`self`) would
+  form a loop through GTK's C side that Python can't collect, keeping every page ever opened in
+  memory. So their handlers reach the page through `widgets.weak_self` (a weak reference to the
+  GObject; PyGObject replaces a widget's Python wrapper over time, so plain `weakref`s don't
+  work), and row widgets find their row from the widget GTK passes in, never by capturing it.
+- *The queue works only while it's on screen.* Hidden, it just notes that it's out of date and
+  rebuilds when it's shown.
+- *The allocator returns big blocks.* `main.py` fixes glibc's mmap threshold at 128 KiB, so the
+  large pixel buffers of covers and backdrops go back to the system when freed instead of
+  piling up in the heap (about half the memory after a few hundred song changes).
+- *The wave draws at most 60 times a second,* with its easing timed rather than per frame, so it
+  looks the same on any display; its inner lines blend two precomputed curves.
 
 <details>
 <summary><b>Black Hole mode</b> (a hidden mode, with spoilers)</summary>
@@ -244,7 +306,7 @@ mentions it.
 
 - **Artist images:** Artist Images… now edits a separate set of Black Hole images. An artist
   without one keeps their normal image.
-- **A seventh tab, Slideshows,** appears in the top bar (and as an icon on small windows) to manage
+- **A seventh tab, Slideshows,** appears in the top bar (and as an icon when the tabs are icons) to manage
   the background slideshows. It disappears again when you leave the mode.
 - **Main menu → Black Hole section:**
   - **Slideshow** on/off
@@ -349,7 +411,7 @@ musicapp/
   player.py             GStreamer playback, queue, EQ, spectrum
   stats.py              listening history and the Stats tab's calculations
   mpris.py              MPRIS D-Bus service
-  lyrics.py             lyrics lookup
+  lyrics.py             lyrics lookup, songs without lyrics, whole-library download
   art.py                covers and artist images; Black Hole mode state
   slideshows.py         Black Hole slideshows (Global → groups → slideshows)
   themes.py             colour themes

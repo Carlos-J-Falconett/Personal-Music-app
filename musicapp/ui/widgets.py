@@ -1,12 +1,10 @@
 """Small reusable widgets and helpers."""
 
-import weakref
-
 import gi
 
 gi.require_version("Graphene", "1.0")
 gi.require_version("Gsk", "4.0")
-from gi.repository import GLib, Graphene, Gsk, Gtk  # noqa: E402
+from gi.repository import Graphene, Gsk, Gtk  # noqa: E402
 
 from ..art import THUMB
 from .menus import AppMenu, menu_header
@@ -168,8 +166,10 @@ class PriorityColumn(Gtk.Widget):
 
 def follow_compact(win, widget, apply):
     """Call apply(widget, level) now and whenever the window's compact level changes
-    (0 = wide, 1 = narrow, 2 = phone-sized). Holds the widget weakly so popped pages can go away."""
-    ref = weakref.ref(widget)
+    (0 = wide, 1 = narrow, 2 = phone-sized). Holds the widget weakly so popped pages can go away,
+    and disconnects from the window once the widget is gone (pages are made afresh each time).
+    The weak reference is to the GObject, not its Python wrapper: see weak_self."""
+    ref = widget.weak_ref()
 
     def on_change(_win, level):
         """Apply the new level if the widget still exists."""
@@ -177,8 +177,63 @@ def follow_compact(win, widget, apply):
         if target is not None:
             apply(target, level)
 
-    win.connect("compact-changed", on_change)
+    handler = win.connect("compact-changed", on_change)
+    widget.weak_ref(lambda: win.disconnect(handler))  # called when the widget is freed
     apply(widget, win.compact_level)
+
+
+def follow_lyrics(lyrics, widget, apply):
+    """Call apply(widget, changed_paths) whenever songs gain or lose their "missing lyrics" status
+    (LyricsService.listeners). Like follow_compact, it holds the widget weakly and stops listening
+    once the widget is freed, so pages and dialogs made afresh each time can go away."""
+    ref = widget.weak_ref()
+
+    def on_change(changed):
+        """Pass the change on if the widget still exists."""
+        target = ref()
+        if target is not None:
+            apply(target, changed)
+
+    lyrics.listeners.append(on_change)
+    widget.weak_ref(lambda: on_change in lyrics.listeners and lyrics.listeners.remove(on_change))
+
+
+def lyrics_missing_mark(tooltip: str | None = None) -> Gtk.Label:
+    """The small round "!" shown next to songs and artists without lyrics (theme colours
+    "Missing Lyrics Mark" / "Mark Text"). Hidden until the caller shows it."""
+    mark = Gtk.Label(label="!", valign=Gtk.Align.CENTER, halign=Gtk.Align.CENTER, visible=False,
+                     tooltip_text=tooltip)
+    mark.add_css_class("lyrics-missing-mark")
+    mark.update_property([Gtk.AccessibleProperty.LABEL], ["No lyrics"])
+    return mark
+
+
+class weak_self:  # noqa: N801 (used like a function: me = weak_self(self))
+    """A weak proxy to `widget`, for the signal handlers of the widgets it owns: `me.attr` is the
+    widget's attribute (ReferenceError once the widget is freed).
+
+    A handler like `button.connect("clicked", lambda *_: self.play())` makes a loop: the page owns
+    the button, the button owns the handler, the handler holds the page. That loop runs through
+    GTK's C side, where Python's garbage collector can't see it, so a page built afresh each time
+    it's opened (Artist, Album, Genre, Playlist pages, their song lists, dialogs) would never be
+    freed. Handlers written with `me = weak_self(self)` and `lambda *_: me.play()` hold it weakly
+    instead; they only run while the widget is on screen, so it is always still alive then.
+
+    It refers to the GObject, not the Python wrapper: PyGObject drops a widget's wrapper when
+    Python code stops using it and makes a new one (with the same attributes) when it's needed
+    again, so an ordinary weakref (weakref.ref / weakref.proxy) would die with the old wrapper
+    while the widget is still on screen."""
+
+    __slots__ = ("_ref",)
+
+    def __init__(self, widget):
+        self._ref = widget.weak_ref()
+
+    def __getattr__(self, name):
+        widget = self._ref()
+        if widget is None:
+            raise ReferenceError(f"the widget is gone (reading .{name})")
+        return getattr(widget, name)
 
 
 def ordering(a, b) -> Gtk.Ordering:

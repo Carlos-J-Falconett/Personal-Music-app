@@ -110,7 +110,7 @@ class PlaylistPage(Adw.NavigationPage):
     def __init__(self, view: PlaylistsView, pid: int):
         super().__init__(title="Playlist", tag=f"playlist:{pid}")
         self.view = view
-        self.win = view.win
+        self.win = win = view.win  # handlers use `win`, not self (see widgets.weak_self)
         self.playlist_id = pid
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -126,9 +126,9 @@ class PlaylistPage(Adw.NavigationPage):
         actions = self.songs.header_actions
         actions.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=6, margin_end=6))
         rename = icon_button("document-edit-symbolic", "Rename Playlist", circular=True)
-        rename.connect("clicked", lambda *_: self.win.rename_playlist(pid))
+        rename.connect("clicked", lambda *_: win.rename_playlist(pid))
         delete = icon_button("user-trash-symbolic", "Delete Playlist", circular=True)
-        delete.connect("clicked", lambda *_: self.win.delete_playlist(pid))
+        delete.connect("clicked", lambda *_: win.delete_playlist(pid))
         actions.append(rename)
         actions.append(delete)
         box.append(self.songs)

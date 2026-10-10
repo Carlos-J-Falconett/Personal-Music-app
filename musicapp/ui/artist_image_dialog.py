@@ -6,6 +6,7 @@ from gi.repository import Adw, Gio, GLib, Gtk
 
 from ..art import THUMB
 from .artists_view import ArtistItem
+from .widgets import weak_self
 
 
 class ArtistImageDialog(Adw.Dialog):
@@ -18,6 +19,7 @@ class ArtistImageDialog(Adw.Dialog):
         self.art = win.art
         self._terms: list[str] = []
         self._detail: ArtistDetailPage | None = None
+        me = weak_self(self)  # for handlers of widgets this dialog owns (see widgets.weak_self)
 
         self.toasts = Adw.ToastOverlay()
         self.nav = Adw.NavigationView()
@@ -26,17 +28,17 @@ class ArtistImageDialog(Adw.Dialog):
 
         # ---- artist list ----
         self.store = Gio.ListStore(item_type=ArtistItem)
-        self.filter = Gtk.CustomFilter.new(lambda item: all(t in item.name.casefold() for t in self._terms))
+        self.filter = Gtk.CustomFilter.new(lambda item: all(t in item.name.casefold() for t in me._terms))
         filtered = Gtk.FilterListModel(model=self.store, filter=self.filter)
         factory = Gtk.SignalListItemFactory()
-        factory.connect("setup", self._setup_row)
-        factory.connect("bind", self._bind_row)
+        factory.connect("setup", lambda f, li: me._setup_row(f, li))
+        factory.connect("bind", lambda f, li: me._bind_row(f, li))
         listview = Gtk.ListView(model=Gtk.NoSelection(model=filtered), factory=factory, single_click_activate=True)
         listview.add_css_class("navigation-sidebar")
-        listview.connect("activate", lambda lv, pos: self.show_artist(filtered.get_item(pos).name))
+        listview.connect("activate", lambda lv, pos: me.show_artist(filtered.get_item(pos).name))
 
         search = Gtk.SearchEntry(placeholder_text="Search artists", margin_start=12, margin_end=12, margin_bottom=6)
-        search.connect("search-changed", self._on_search)
+        search.connect("search-changed", lambda entry: me._on_search(entry))
         self.list_title = Adw.WindowTitle(title="Artist Images")
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(Adw.HeaderBar(title_widget=self.list_title))
@@ -49,7 +51,7 @@ class ArtistImageDialog(Adw.Dialog):
 
         self._listener = self._on_artist_changed
         self.art.artist_listeners.append(self._listener)
-        self.connect("closed", lambda *_: self._on_closed())
+        self.connect("closed", lambda *_: me._on_closed())
 
         if artist:
             self.show_artist(artist, animate=False)
@@ -146,6 +148,7 @@ class ArtistDetailPage(Adw.NavigationPage):
         self.art = dialog.art
         self.artist = artist
         self.tracks = tracks
+        me = weak_self(self)  # for handlers of widgets this page owns (see widgets.weak_self)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, valign=Gtk.Align.CENTER,
                       margin_start=24, margin_end=24, margin_bottom=24)
@@ -161,10 +164,10 @@ class ArtistDetailPage(Adw.NavigationPage):
                             halign=Gtk.Align.CENTER, margin_top=12)
         choose.add_css_class("suggested-action")
         choose.add_css_class("pill")
-        choose.connect("clicked", lambda *_: self._choose())
+        choose.connect("clicked", lambda *_: me._choose())
         self.reset = Gtk.Button(label="Reset to Default", halign=Gtk.Align.CENTER)
         self.reset.add_css_class("pill")
-        self.reset.connect("clicked", lambda *_: self._reset())
+        self.reset.connect("clicked", lambda *_: me._reset())
         for w in (self.mode_label, self.avatar, name, self.status, choose, self.reset):
             box.append(w)
 

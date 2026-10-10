@@ -8,6 +8,7 @@ gi.require_version("Graphene", "1.0")
 from gi.repository import Adw, Graphene, Gtk  # noqa: E402
 
 from ..art import LARGE  # noqa: E402
+from .widgets import follow_lyrics  # noqa: E402
 
 FOLLOW_PAUSE_S = 4.0  # after a manual scroll, stop auto-following for this long
 LEAD_S = 0.15  # highlight a line slightly early so it feels on time
@@ -82,6 +83,8 @@ class LyricsView(Gtk.Overlay):
 
         self.player.connect("position-changed", lambda _p, pos, _d: self._on_position(pos))
         self.player.connect("seeked", lambda _p, pos: self._on_position(pos, force=True))
+        # Lyrics added for this song (Missing Lyrics dialog) or found by Get Lyrics: show them.
+        follow_lyrics(win.app.lyrics, self, lambda view, changed: view._on_lyrics_status(changed))
 
     # ---- loading ----
 
@@ -117,6 +120,15 @@ class LyricsView(Gtk.Overlay):
             self.win.app.lyrics.forget(track)
             self.load(track)
 
+    def _on_lyrics_status(self, changed):
+        """Songs gained or lost lyrics: if this one is showing "No lyrics found" and now has
+        some, load them (the same way as Retry, but keeping the cached result)."""
+        track = self._track
+        if track is None or track.path not in changed or self.win.app.lyrics.is_missing(track):
+            return
+        self._track = None
+        self.load(track)
+
     def _on_lyrics(self, track, lyrics):
         """The lookup finished: show the lines or a message."""
         if track is not self._track:
@@ -149,7 +161,7 @@ class LyricsView(Gtk.Overlay):
         """Show the lines; synced ones can be clicked to seek there."""
         self._clear_lines()
         synced = lyrics.kind == "synced"
-        for index, (seconds, text) in enumerate(lyrics.lines):
+        for seconds, text in lyrics.lines:
             label = Gtk.Label(label=text or "♪", wrap=True, justify=Gtk.Justification.CENTER,
                               xalign=0.5, max_width_chars=30)
             label.add_css_class("lyric-line")

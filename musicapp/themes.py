@@ -57,7 +57,9 @@ GROUPS = [
         ("play_all_text", "Play Button Text", "Its label and icon", "accent_text", 1),
         ("shuffle_all", "Shuffle Button", "The Shuffle pill on pages (kept faint)", "highlight", 1),
         ("shuffle_all_text", "Shuffle Button Text", "Its label and icon", "text", 1),
-        ("section_titles", "Search Section Titles", "Artists / Albums / Songs in search results", "text", 1),
+        ("section_titles", "Search Section Titles", "Artists / Albums / Genres / Songs in search results", "text", 1),
+        ("page_label", "Page Label", "The small ALBUM / GENRE label above album and genre titles",
+         "secondary_text", 0.66),
     ]),
     ("Song Lists", [
         ("song_title", "Song Title", "Song names in lists", "text", 1),
@@ -69,10 +71,15 @@ GROUPS = [
         ("row_selected", "Selected Row", "Under selected songs (kept translucent)", "accent", 1),
         ("heart_empty", "Empty Heart", "The heart of songs that aren't favorites", "text", 0.45),
     ]),
-    ("Artists & Albums", [
+    ("Artists, Albums & Genres", [
         ("artist_name", "Artist Name", "Names under artist pictures", "text", 1),
         ("album_title", "Album Title", "Names under album covers", "text", 1),
+        ("genre_name", "Genre Name", "Names under genre covers", "text", 1),
         ("card_details", "Details", "Song counts, years and artists under them", "text", 0.6),
+        ("artist_page_buttons", "Artist Page Buttons", "The Hide and Change Image buttons on an artist's page",
+         "text", 1),
+        ("artist_hidden_button", "Hidden Artist Button", "The Hide button while the artist is hidden",
+         "accent_light", 1),
     ]),
     ("Playlists", [
         ("playlist_name", "Playlist Name", "Names in the Playlists tab", "text", 1),
@@ -148,6 +155,18 @@ GROUPS = [
         ("stats_heatmap", "Listening Days", "The heatmap's squares for days with listening", "accent", 1),
         ("stats_empty_day", "Empty Days", "The heatmap's squares for days without listening", "text", 0.12),
         ("stats_genre_bar", "Genre Bars", "The bars of the Genres ranking", "accent", 1),
+        ("stats_genre_track", "Genre Bar Tracks", "The rest of each Genres ranking bar (kept faint)", "text", 1),
+    ]),
+    ("Missing Lyrics", [
+        ("lyrics_mark", "Missing Lyrics Mark", "The “!” after songs and artists without lyrics", "#f5c211", 1),
+        ("lyrics_mark_text", "Mark Text", "The “!” itself", "#1a1a1a", 1),
+        ("lyrics_download", "Get Lyrics Button", "Get Lyrics in All Songs and Search Online Again (kept faint)",
+         "highlight", 1),
+        ("lyrics_download_text", "Get Lyrics Button Text", "Their label and icon", "text", 1),
+        ("lyrics_manager_title", "Song Title", "Song names in the Missing Lyrics dialog", "text", 1),
+        ("lyrics_manager_details", "Song Details", "Artist and album there, and its hints", "secondary_text", 1),
+        ("lyrics_add", "Add Button", "The Add… buttons in the Missing Lyrics dialog", "accent", 1),
+        ("lyrics_add_text", "Add Button Text", "Their label and icon", "accent_text", 1),
     ]),
     ("Other", [
         ("resize_handle", "Resize Handle", "The line shown when resizing the Now Playing panel", "accent_light", 1),

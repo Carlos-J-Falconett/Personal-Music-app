@@ -12,7 +12,8 @@ Modules (main.py starts application.main):
 - player       GStreamer playback, the queue with shuffle/repeat, equalizer and spectrum analysis
 - stats        listening history (what was played, for how long) and the Stats tab's calculations
 - mpris        the MPRIS D-Bus service (GNOME media controls, media keys)
-- lyrics       lyrics lookup: tags, sidecar files, disk cache, lrclib.net
+- lyrics       lyrics lookup: tags, sidecar files, disk cache, lrclib.net; songs without lyrics,
+               whole-library downloads, lyrics added from local files
 - art          cover art and artist images, scaled and cached; Black Hole mode state
 - slideshows   Black Hole mode's slideshows: Global → groups → individual slideshows
 - themes       colour themes applied over style.css

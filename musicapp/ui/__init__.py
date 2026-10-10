@@ -12,6 +12,7 @@
 - player_controls    time bar, playback buttons, volume
 - queue_view         the queue (Now Playing + Up Next)
 - lyrics_view        synced/plain lyrics over the blurred cover
+- lyrics_manager     Get Lyrics (whole-library download) and the Missing Lyrics dialog
 - equalizer_view     the per-song 10-band equalizer
 - visualizer         the audio wave drawn from the spectrum
 - focus_view         the full-window focus view

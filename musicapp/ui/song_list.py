@@ -6,7 +6,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from ..library import TrackItem, format_total
 from .menus import AppMenu
 from .widgets import (HEART_OFF, HEART_ON, PLAYLIST_ICON, fill_playlist_checks, follow_compact, ordering, song_header,
-                      update_heart)
+                      update_heart, weak_self)
 
 
 class SongList(Gtk.Box):
@@ -30,6 +30,9 @@ class SongList(Gtk.Box):
         self.playlist_id: int | None = None
         self.queue_from = queue_from
         self.queue_source = queue_source
+        # Song lists are made afresh with every Album / Genre / Playlist page, so the handlers of
+        # the widgets they own hold them weakly (see weak_self).
+        me = weak_self(self)
         self._menu_items: list[TrackItem] = []
         self._summary = ""
 
@@ -52,12 +55,12 @@ class SongList(Gtk.Box):
         self.play_button.add_css_class("suggested-action")
         self.play_button.add_css_class("pill")
         self.play_button.add_css_class("play-all")
-        self.play_button.connect("clicked", lambda *_: self.play_all(shuffle=False))
+        self.play_button.connect("clicked", lambda *_: me.play_all(shuffle=False))
         self.shuffle_button = Gtk.Button()
         self.shuffle_button.set_child(Adw.ButtonContent(icon_name="media-playlist-shuffle-symbolic", label="Shuffle"))
         self.shuffle_button.add_css_class("pill")
         self.shuffle_button.add_css_class("shuffle-all")
-        self.shuffle_button.connect("clicked", lambda *_: self.play_all(shuffle=True))
+        self.shuffle_button.connect("clicked", lambda *_: me.play_all(shuffle=True))
         self.header_actions.append(self.play_button)
         self.header_actions.append(self.shuffle_button)
         header.append(self.header_actions)
@@ -75,24 +78,24 @@ class SongList(Gtk.Box):
         self.sort_model = Gtk.SortListModel(model=self.store, sorter=self.view.get_sorter())
         self.selection = Gtk.MultiSelection(model=self.sort_model)
         self.view.set_model(self.selection)
-        self.view.connect("activate", self._on_activate)
+        self.view.connect("activate", lambda view, position: me._on_activate(view, position))
 
         if show_track_no:
             self._add_column("#", *self._text_cell(lambda i: str(i.track_no) if i.track_no else "", xalign=1,
                                                    css="number-cell track-number"),
                              fixed=40, sorter=lambda a, b: ordering((a.disc_no, a.track_no), (b.disc_no, b.track_no)))
-        self._add_column("Song", self._setup_song, self._bind_song, expand=True,
+        self._add_column("Song", SongList._setup_song, SongList._bind_song, expand=True,
                          sorter=lambda a, b: ordering(a.title_key, b.title_key))
         self._add_column("Duration", *self._text_cell(lambda i: i.duration_text, xalign=1, css="number-cell duration-cell"),
                          fixed=84, sorter=lambda a, b: ordering(a.duration, b.duration))
-        self._add_column("", self._setup_heart, self._bind_heart, fixed=48)
+        self._add_column("", SongList._heart_setup(win.library), SongList._bind_heart, fixed=48)
 
         # Right-click / long-press context menu
         click = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
-        click.connect("pressed", lambda g, n, x, y: self._on_context(x, y))
+        click.connect("pressed", lambda g, n, x, y: me._on_context(x, y))
         self.view.add_controller(click)
         press = Gtk.GestureLongPress(touch_only=True)
-        press.connect("pressed", lambda g, x, y: self._on_context(x, y))
+        press.connect("pressed", lambda g, x, y: me._on_context(x, y))
         self.view.add_controller(press)
         self._install_actions()
 
@@ -119,7 +122,7 @@ class SongList(Gtk.Box):
         factory = Gtk.SignalListItemFactory()
         factory.connect("setup", setup)
         factory.connect("bind", bind)
-        factory.connect("unbind", self._unbind)
+        factory.connect("unbind", SongList._unbind)
         col = Gtk.ColumnViewColumn(title=title, factory=factory, expand=expand, resizable=expand)
         if fixed:
             col.set_fixed_width(fixed)
@@ -128,8 +131,10 @@ class SongList(Gtk.Box):
         self.view.append_column(col)
         return col
 
-    def _text_cell(self, getter, xalign=0.0, css=None):
-        """setup/bind callbacks for a plain text cell showing getter(item)."""
+    @staticmethod
+    def _text_cell(getter, xalign=0.0, css=None):
+        """setup/bind callbacks for a plain text cell showing getter(item). (Cell callbacks don't
+        use the list, so they don't keep it alive: see weak_self.)"""
         def setup(_f, li):
             label = Gtk.Label(xalign=xalign, ellipsize=3, hexpand=True)  # 3 = Pango.EllipsizeMode.END
             for name in (css or "").split():
@@ -140,11 +145,12 @@ class SongList(Gtk.Box):
             label, item = li.get_child(), li.get_item()
             label.set_text(getter(item))
             label._item = item
-            self._track_playing(label, item)
+            SongList._track_playing(label, item)
 
         return setup, bind
 
-    def _setup_song(self, _f, li):
+    @staticmethod
+    def _setup_song(_f, li):
         """The Song cell: title above artist."""
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER, hexpand=True)
         title = Gtk.Label(xalign=0, ellipsize=3)
@@ -157,33 +163,39 @@ class SongList(Gtk.Box):
         box._labels = (title, artist)
         li.set_child(box)
 
-    def _bind_song(self, _f, li):
+    @staticmethod
+    def _bind_song(_f, li):
         """Fill the Song cell and follow the song's `playing` flag."""
         box, item = li.get_child(), li.get_item()
         title, artist = box._labels
         title.set_text(item.title)
         artist.set_text(item.artist)
         box._item = item
-        self._track_playing(title, item)
+        SongList._track_playing(title, item)
         box._handlers = title._handlers  # _unbind looks for handlers on the cell's child
 
-    def _setup_heart(self, _f, li):
-        """The favorite heart cell."""
-        btn = Gtk.Button(valign=Gtk.Align.CENTER, halign=Gtk.Align.CENTER)
-        btn.add_css_class("flat")
-        btn.add_css_class("circular")
-        btn.add_css_class("heart-button")
-        btn.connect("clicked", lambda b: self.win.library.toggle_favorite(b._item))
-        li.set_child(btn)
+    @staticmethod
+    def _heart_setup(library):
+        """The setup callback of the favorite heart cell (clicking toggles the row's song)."""
+        def setup(_f, li):
+            btn = Gtk.Button(valign=Gtk.Align.CENTER, halign=Gtk.Align.CENTER)
+            btn.add_css_class("flat")
+            btn.add_css_class("circular")
+            btn.add_css_class("heart-button")
+            btn.connect("clicked", lambda b: library.toggle_favorite(b._item))
+            li.set_child(btn)
+        return setup
 
-    def _bind_heart(self, _f, li):
+    @staticmethod
+    def _bind_heart(_f, li):
         """Fill the heart and follow the song's `favorite` flag."""
         btn, item = li.get_child(), li.get_item()
         btn._item = item
         update_heart(btn, item.favorite)
         btn._handlers = [(item, item.connect("notify::favorite", lambda it, _p: update_heart(btn, it.favorite)))]
 
-    def _track_playing(self, widget, item):
+    @staticmethod
+    def _track_playing(widget, item):
         """Highlight `widget` while `item` is the playing song (the handler is dropped on unbind)."""
         def update(*_):
             if item.playing:
@@ -332,16 +344,17 @@ class SongList(Gtk.Box):
             action.connect("activate", callback)
             group.add_action(action)
 
-        player = self.win.player
-        library = self.win.library
-        add("play", lambda *_: player.play_tracks(self._menu_items, 0))
-        add("enqueue", lambda *_: (player.enqueue(self._menu_items), self.win.toast(self._count_text("will play next"))))
-        add("favorite", lambda *_: self._toggle_favorite())
-        add("goto-artist", lambda *_: self.win.show_artist(self._menu_items[0].artist_key))
-        add("goto-album", lambda *_: self.win.show_album((self._menu_items[0].artist_key, self._menu_items[0].album)))
-        add("new-playlist", lambda *_: self.win.new_playlist_with(list(self._menu_items)))
-        add("remove-from-playlist", lambda *_: library.remove_from_playlist(self.playlist_id, self._menu_items))
-        add("add-to-playlist", self._on_add_to_playlist, GLib.VariantType.new("i"))
+        # The group belongs to this list, so its actions hold the list weakly (see weak_self).
+        me, win = weak_self(self), self.win
+        player, library = win.player, win.library
+        add("play", lambda *_: player.play_tracks(me._menu_items, 0))
+        add("enqueue", lambda *_: (player.enqueue(me._menu_items), win.toast(me._count_text("will play next"))))
+        add("favorite", lambda *_: me._toggle_favorite())
+        add("goto-artist", lambda *_: win.show_artist(me._menu_items[0].artist_key))
+        add("goto-album", lambda *_: win.show_album((me._menu_items[0].artist_key, me._menu_items[0].album)))
+        add("new-playlist", lambda *_: win.new_playlist_with(list(me._menu_items)))
+        add("remove-from-playlist", lambda *_: library.remove_from_playlist(me.playlist_id, me._menu_items))
+        add("add-to-playlist", lambda action, param: me._on_add_to_playlist(action, param), GLib.VariantType.new("i"))
         self.insert_action_group("songs", group)
 
     def _count_text(self, suffix):

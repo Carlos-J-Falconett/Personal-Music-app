@@ -180,7 +180,7 @@ class SearchView(Gtk.Box):
             self._section("Songs", len(self._songs), "songs")
             rows = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
             rows.add_css_class("boxed-list")
-            for index, item in enumerate(self._songs[:PREVIEW_SONGS]):
+            for item in self._songs[:PREVIEW_SONGS]:
                 # use_markup must be off before the text is set (names often contain "&").
                 row = Adw.ActionRow(use_markup=False, activatable=True, title_lines=1, subtitle_lines=1)
                 row.set_title(item.title)

@@ -28,6 +28,10 @@ BLUR = 384  # heavily blurred copy that fills the space around a fitted backdrop
 # Backdrop-sized textures take tens of MB each: only the most recent few stay in memory
 # (the showing one, the one fading out, the next slide); the rest reload from the disk cache.
 BACKDROP_TEXTURES_KEPT = 4
+# Memory kept for the other textures (covers, thumbnails, blurs, artist images), least recently used
+# dropped first. Pictures on screen stay alive through their widgets anyway; a dropped one is
+# reloaded from the disk cache when it's needed again.
+TEXTURE_CACHE_BYTES = 64 * 1024 * 1024
 
 
 def _embedded_picture(path: str) -> bytes | None:
@@ -134,11 +138,17 @@ def _save_blurred(pixbuf, dest: Path):
         pixbuf.savev(str(dest), "jpeg", ["quality"], ["90"])
 
 
+def _texture_bytes(texture) -> int:
+    """Roughly the memory a texture takes (4 bytes a pixel)."""
+    return texture.get_width() * texture.get_height() * 4
+
+
 class ArtCache:
     """Every picture the app shows: album covers, artist images (normal and Black Hole mode) and the
     Black Hole slideshow's images and videos.
     Pictures are scaled once on worker threads, cached on disk (COVER_DIR, one file per key and size),
-    and kept in memory as textures (the few full-window ones in a small LRU). UI code calls the
+    and kept in memory as textures in two LRUs: the few full-window ones (BACKDROP_TEXTURES_KEPT) and
+    everything else, up to TEXTURE_CACHE_BYTES. UI code calls the
     request_* methods and gets a texture (or None) back on the main thread.
     Black Hole mode ("turned" internally) lives here, with the slideshow settings and `slideshows`."""
 
@@ -146,7 +156,8 @@ class ArtCache:
         COVER_DIR.mkdir(parents=True, exist_ok=True)
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="art")
         self._lock = threading.Lock()
-        self._textures: dict[tuple[str, int], Gdk.Texture] = {}
+        self._textures: OrderedDict[tuple[str, int], Gdk.Texture] = OrderedDict()
+        self._texture_bytes = 0  # memory of the textures in self._textures (4 bytes a pixel)
         self._large_textures: OrderedDict[tuple[str, int], Gdk.Texture] = OrderedDict()
         self._missing: set[str] = set()
         self._inflight: dict[tuple[str, int], list] = {}
@@ -228,20 +239,32 @@ class ArtCache:
 
     def _cached(self, tex_key):
         """A texture in memory (small ones, or the recent full-window ones), or None."""
-        if tex_key in self._large_textures:
-            self._large_textures.move_to_end(tex_key)
-            return self._large_textures[tex_key]
-        return self._textures.get(tex_key)
+        for textures in (self._large_textures, self._textures):
+            if tex_key in textures:
+                textures.move_to_end(tex_key)
+                return textures[tex_key]
+        return None
 
     def _store(self, tex_key, texture):
-        """Keep a texture in memory; full-window ones only in the small LRU."""
+        """Keep a texture in memory: full-window ones in their small LRU, the rest in the LRU capped at
+        TEXTURE_CACHE_BYTES (the least recently used go first)."""
         if tex_key[1] >= BACKDROP:
             self._large_textures[tex_key] = texture
             self._large_textures.move_to_end(tex_key)
             while len(self._large_textures) > BACKDROP_TEXTURES_KEPT:
                 self._large_textures.popitem(last=False)
-        else:
-            self._textures[tex_key] = texture
+            return
+        self._forget_texture(tex_key)
+        self._textures[tex_key] = texture
+        self._texture_bytes += _texture_bytes(texture)
+        while self._texture_bytes > TEXTURE_CACHE_BYTES and len(self._textures) > 1:
+            self._forget_texture(next(iter(self._textures)))
+
+    def _forget_texture(self, tex_key):
+        """Drop a texture from the memory cache (if it's there)."""
+        texture = self._textures.pop(tex_key, None)
+        if texture is not None:
+            self._texture_bytes -= _texture_bytes(texture)
 
     def request_track(self, item, size: int, callback):
         """callback(texture_or_None) is invoked on the main thread."""
@@ -328,9 +351,10 @@ class ArtCache:
         for key in keys:
             for cached in COVER_DIR.glob(f"{key}_*.jpg"):
                 cached.unlink(missing_ok=True)
-            for textures in (self._textures, self._large_textures):
-                for tex_key in [k for k in textures if k[0] == key]:
-                    del textures[tex_key]
+            for tex_key in [k for k in self._textures if k[0] == key]:
+                self._forget_texture(tex_key)
+            for tex_key in [k for k in self._large_textures if k[0] == key]:
+                del self._large_textures[tex_key]
             self._missing.discard(key)
         for listener in list(self.artist_listeners):
             listener(name)

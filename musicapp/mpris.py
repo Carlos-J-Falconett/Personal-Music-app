@@ -127,9 +127,9 @@ class MprisService:
         invocation.return_value(None)
 
     def _get_property(self, _conn, _sender, _path, iface, prop):
-        """Answer a property read."""
-        value = self._properties(iface).get(prop)
-        return value
+        """Answer a property read (working out only that one; None for an unknown property)."""
+        get = self._getters(iface).get(prop)
+        return get() if get is not None else None
 
     def _set_property(self, _conn, _sender, _path, _iface, prop, value):
         """Handle a property write (repeat, shuffle, volume)."""
@@ -144,37 +144,42 @@ class MprisService:
 
     # ---- property values ----
 
-    def _properties(self, iface) -> dict[str, GLib.Variant]:
-        """Every property of an interface with its current value."""
+    def _getters(self, iface) -> dict:
+        """Every property of an interface, as name → a function giving its current value. Only the
+        properties asked for are worked out (a change announces one or two; GetAll wants them all)."""
         if iface == ROOT_IFACE:
             return {
-                "CanQuit": GLib.Variant("b", True),
-                "CanRaise": GLib.Variant("b", True),
-                "HasTrackList": GLib.Variant("b", False),
-                "Identity": GLib.Variant("s", APP_NAME),
-                "DesktopEntry": GLib.Variant("s", APP_ID),
-                "SupportedUriSchemes": GLib.Variant("as", ["file"]),
-                "SupportedMimeTypes": GLib.Variant("as", ["audio/mpeg", "audio/flac", "audio/ogg", "audio/mp4"]),
+                "CanQuit": lambda: GLib.Variant("b", True),
+                "CanRaise": lambda: GLib.Variant("b", True),
+                "HasTrackList": lambda: GLib.Variant("b", False),
+                "Identity": lambda: GLib.Variant("s", APP_NAME),
+                "DesktopEntry": lambda: GLib.Variant("s", APP_ID),
+                "SupportedUriSchemes": lambda: GLib.Variant("as", ["file"]),
+                "SupportedMimeTypes": lambda: GLib.Variant("as", ["audio/mpeg", "audio/flac", "audio/ogg", "audio/mp4"]),
             }
         p = self.player
-        has_track = p.current is not None
         return {
-            "PlaybackStatus": GLib.Variant("s", "Playing" if p.playing else ("Paused" if has_track else "Stopped")),
-            "LoopStatus": GLib.Variant("s", LOOP_TO_MPRIS[p.repeat]),
-            "Rate": GLib.Variant("d", 1.0),
-            "Shuffle": GLib.Variant("b", p.shuffle),
-            "Metadata": GLib.Variant("a{sv}", self._metadata()),
-            "Volume": GLib.Variant("d", p.volume),
-            "Position": GLib.Variant("x", int(p.get_position() * 1e6)),
-            "MinimumRate": GLib.Variant("d", 1.0),
-            "MaximumRate": GLib.Variant("d", 1.0),
-            "CanGoNext": GLib.Variant("b", p.has_next()),
-            "CanGoPrevious": GLib.Variant("b", p.has_previous()),
-            "CanPlay": GLib.Variant("b", True),
-            "CanPause": GLib.Variant("b", has_track),
-            "CanSeek": GLib.Variant("b", has_track),
-            "CanControl": GLib.Variant("b", True),
+            "PlaybackStatus": lambda: GLib.Variant(
+                "s", "Playing" if p.playing else ("Paused" if p.current is not None else "Stopped")),
+            "LoopStatus": lambda: GLib.Variant("s", LOOP_TO_MPRIS[p.repeat]),
+            "Rate": lambda: GLib.Variant("d", 1.0),
+            "Shuffle": lambda: GLib.Variant("b", p.shuffle),
+            "Metadata": lambda: GLib.Variant("a{sv}", self._metadata()),
+            "Volume": lambda: GLib.Variant("d", p.volume),
+            "Position": lambda: GLib.Variant("x", int(p.get_position() * 1e6)),
+            "MinimumRate": lambda: GLib.Variant("d", 1.0),
+            "MaximumRate": lambda: GLib.Variant("d", 1.0),
+            "CanGoNext": lambda: GLib.Variant("b", p.has_next()),
+            "CanGoPrevious": lambda: GLib.Variant("b", p.has_previous()),
+            "CanPlay": lambda: GLib.Variant("b", True),
+            "CanPause": lambda: GLib.Variant("b", p.current is not None),
+            "CanSeek": lambda: GLib.Variant("b", p.current is not None),
+            "CanControl": lambda: GLib.Variant("b", True),
         }
+
+    def _properties(self, iface) -> dict[str, GLib.Variant]:
+        """Every property of an interface with its current value (for GetAll)."""
+        return {name: get() for name, get in self._getters(iface).items()}
 
     @staticmethod
     def _track_path(track) -> str:
@@ -229,8 +234,8 @@ class MprisService:
         """Emit PropertiesChanged for the given properties."""
         if not self._conn:
             return
-        values = self._properties(iface)
-        changed = {p: values[p] for p in props}
+        getters = self._getters(iface)
+        changed = {p: getters[p]() for p in props}
         self._conn.emit_signal(
             None, OBJECT_PATH, "org.freedesktop.DBus.Properties", "PropertiesChanged",
             GLib.Variant("(sa{sv}as)", (iface, changed, [])),

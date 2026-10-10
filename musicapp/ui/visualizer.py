@@ -21,8 +21,13 @@ TILT_DB_PER_OCTAVE = 3.0  # music has less energy up high; lift it so the right 
 # so peaks stand out instead of every bin sitting at mid height.
 FLOOR_DB, CEILING_DB = -70.0, -10.0
 CURVE = 1.4
-ATTACK, DECAY = 0.5, 0.12
+ATTACK, DECAY = 0.5, 0.12  # how far levels move toward their targets per STEP_US of time
 SETTLED = 0.002
+# Redraw at most this often. The spectrum arrives ~30 times a second, and drawing the ribbon is the
+# costly part (cairo strokes it in software, ~6 ms a frame), so displays faster than 60 Hz don't
+# redraw more; the easing is timed per STEP_US, so it looks the same at any refresh rate.
+STEP_US = 1_000_000 // 60
+MIN_FRAME_US = STEP_US * 9 // 10  # a little slack, so a 60 Hz display never skips a frame
 
 # ---- look ----
 TAIL = 0.12  # flat parallel lines on each side, as a fraction of the width
@@ -63,6 +68,7 @@ class WaveVisualizer(Gtk.DrawingArea):
         self._levels = [0.0] * BINS
         self._targets = [0.0] * BINS
         self._tick_id = 0
+        self._last_frame_us = 0  # frame-clock time of the last step (see _on_tick)
         self._peak = GAIN_FLOOR
         self._band_width = NYQUIST / SPECTRUM_BANDS
         self._edges = _bin_edges()
@@ -122,15 +128,25 @@ class WaveVisualizer(Gtk.DrawingArea):
     def _animate(self):
         """Make sure the frame-clock animation is running (only on screen: hidden, it has no frames)."""
         if not self._tick_id and self.get_mapped():
+            self._last_frame_us = 0
             self._tick_id = self.add_tick_callback(self._on_tick)
 
-    def _on_tick(self, _widget, _clock):
-        """Per frame: move levels toward their targets (fast up, slow down); stop when settled at rest."""
-        self._peak = max(max(self._levels), self._peak * GAIN_RELEASE, GAIN_FLOOR)
+    def _on_tick(self, _widget, clock):
+        """Per frame (at most MIN_FRAME_US apart): move levels toward their targets (fast up, slow
+        down) by the time since the last step; stop when settled at rest."""
+        now = clock.get_frame_time()
+        elapsed = now - self._last_frame_us if self._last_frame_us else STEP_US
+        if elapsed < MIN_FRAME_US:
+            return True  # a fast display: skip this frame
+        self._last_frame_us = now
+        steps = min(elapsed / STEP_US, 10.0)  # after a stall, don't overshoot
+        attack = 1 - (1 - ATTACK) ** steps
+        decay = 1 - (1 - DECAY) ** steps
+        self._peak = max(max(self._levels), self._peak * GAIN_RELEASE ** steps, GAIN_FLOOR)
         moving = False
         for i, target in enumerate(self._targets):
             level = self._levels[i]
-            level += (target - level) * (ATTACK if target > level else DECAY)
+            level += (target - level) * (attack if target > level else decay)
             self._levels[i] = level
             if abs(target - level) > SETTLED:
                 moving = True
@@ -196,6 +212,9 @@ class WaveVisualizer(Gtk.DrawingArea):
         bottom = self._edge(x0, x1, width, mid + gap / 2, levels, amp, drop / 2, LAG, LAG_SCALE)
         if len(bottom) < len(top):  # the shifted edge can lose its last lobe; keep pairs aligned
             top = top[:len(bottom) - 2] + top[-2:]
+        # Each edge as a path: its start point and its spline segments. The ribbon's lines blend
+        # these (see _trace_between), so the spline is worked out twice a frame, not once a line.
+        top_path, bottom_path = _spline(top), _spline(bottom)
 
         # The ribbon: fine lines blending from the top edge to the bottom edge.
         if loud > 0.01:
@@ -208,39 +227,59 @@ class WaveVisualizer(Gtk.DrawingArea):
                 r, g, b = (red[c] + (blue[c] - red[c]) * t_mid for c in range(3))
                 cr.set_source_rgba(r, g, b, 0.8 * loud)
                 for i in group:
-                    t = i / (LINES - 1)
-                    pts = [(ax + (bx - ax) * t, ay + (by - ay) * t) for (ax, ay), (bx, by) in zip(top, bottom)]
-                    _trace(cr, pts, width)
+                    _trace_between(cr, top_path, bottom_path, i / (LINES - 1), width)
                 cr.stroke()
             cr.set_antialias(cairo.Antialias.DEFAULT)
 
         # The two edges: exactly the wave colours at rest, brighter and glowing with the music.
-        for pts, base, edge in ((bottom, blue, blue_edge), (top, red, red_edge)):
+        for path, base, edge in ((bottom_path, blue, blue_edge), (top_path, red, red_edge)):
             if loud > 0.01:
                 cr.set_line_width(4)
                 cr.set_source_rgba(*base, 0.25 * loud)
-                _trace(cr, pts, width)
+                _trace(cr, path, width)
                 cr.stroke()
             cr.set_line_width(1.4)
             cr.set_source_rgba(*mix(base, edge, loud), 0.95)
-            _trace(cr, pts, width)
+            _trace(cr, path, width)
             cr.stroke()
 
 
-def _trace(cr, pts, width):
-    """Flat tail from the left edge, the smooth wave through pts, flat tail to the right edge."""
-    cr.move_to(0, pts[0][1])
-    cr.line_to(*pts[0])
-    _curve_through(cr, pts)
-    cr.line_to(width, pts[-1][1])
-
-
-def _curve_through(cr, pts):
-    """Smooth Catmull-Rom spline through pts (current point must be pts[0])."""
-    for i in range(len(pts) - 1):
+def _spline(pts):
+    """A smooth Catmull-Rom spline through pts, as (start point, [bezier segments]), each segment
+    (c1x, c1y, c2x, c2y, x, y) for cairo's curve_to."""
+    segments = []
+    last = len(pts) - 1
+    for i in range(last):
         p0 = pts[i - 1] if i > 0 else pts[i]
         p1, p2 = pts[i], pts[i + 1]
-        p3 = pts[i + 2] if i + 2 < len(pts) else p2
-        c1 = (p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6)
-        c2 = (p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6)
-        cr.curve_to(c1[0], c1[1], c2[0], c2[1], p2[0], p2[1])
+        p3 = pts[i + 2] if i + 1 < last else p2
+        segments.append((p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
+                         p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6, p2[0], p2[1]))
+    return pts[0], segments
+
+
+def _trace(cr, path, width):
+    """Flat tail from the left edge, the smooth wave along path (from _spline), flat tail to the
+    right edge."""
+    (x, y), segments = path
+    cr.move_to(0, y)
+    cr.line_to(x, y)
+    for segment in segments:
+        cr.curve_to(*segment)
+    cr.line_to(width, segments[-1][5] if segments else y)
+
+
+def _trace_between(cr, a, b, t, width):
+    """_trace for the line a fraction t of the way from path a to path b (same number of points).
+    A spline's control points are a linear mix of its points, so blending two splines' segments is
+    the same as the spline through the blended points, and much cheaper."""
+    (ax, ay), a_segments = a
+    (bx, by), b_segments = b
+    y = ay + (by - ay) * t
+    cr.move_to(0, y)
+    cr.line_to(ax + (bx - ax) * t, y)
+    for (a0, a1, a2, a3, a4, a5), (b0, b1, b2, b3, b4, b5) in zip(a_segments, b_segments):
+        y = a5 + (b5 - a5) * t
+        cr.curve_to(a0 + (b0 - a0) * t, a1 + (b1 - a1) * t, a2 + (b2 - a2) * t, a3 + (b3 - a3) * t,
+                    a4 + (b4 - a4) * t, y)
+    cr.line_to(width, y)

@@ -1,12 +1,13 @@
-"""Artists tab: artist grid → artist's albums → album's songs, as a navigation stack."""
+"""Artists tab: artist grid → artist's albums → album's songs, as a navigation stack.
+Artists with songs whose lyrics couldn't be found get a "!" after their name (its tooltip counts them)."""
 
 from gi.repository import Adw, Gio, GObject, Gtk
 
 from ..art import LARGE
 from ..library import AlbumItem, format_total
-from .cards import AlbumCard, ArtistCard
+from .cards import AlbumCard, ArtistCard, missing_lyrics_text
 from .song_list import SongList
-from .widgets import CoverArt, NarrowColumn, follow_compact
+from .widgets import CoverArt, NarrowColumn, follow_compact, follow_lyrics, lyrics_missing_mark, weak_self
 
 ROOT_TAG = "artists"
 
@@ -64,8 +65,12 @@ class ArtistsView(Adw.Bin):
         self.set_child(self.nav)
 
         self.store = Gio.ListStore(item_type=ArtistItem)
+        # Every card the grid makes (it reuses them as it scrolls), so their "!" marks can be
+        # updated in place when lyrics are found or found missing (see _on_lyrics_changed).
+        self._cards: list[ArtistCard] = []
         factory = Gtk.SignalListItemFactory()
-        factory.connect("setup", lambda _f, li: li.set_child(ArtistCard(win.art)))
+        factory.connect("setup", lambda _f, li: li.set_child(self._new_card()))
+        factory.connect("teardown", lambda _f, li: self._forget_card(li.get_child()))
         factory.connect("bind", lambda _f, li: li.get_child().set_artist(
             li.get_item().name, li.get_item().tracks, win.library.is_hidden(li.get_item().name)))
         grid = Gtk.GridView(model=Gtk.NoSelection(model=self.store), factory=factory,
@@ -91,6 +96,29 @@ class ArtistsView(Adw.Bin):
         box.add_css_class("content-glass")
         box.set_overflow(Gtk.Overflow.HIDDEN)  # clip to the rounded card
         self.nav.add(Adw.NavigationPage(title="Artists", tag=ROOT_TAG, child=box))
+        follow_lyrics(win.app.lyrics, self, lambda view, changed: view._on_lyrics_changed(changed))
+
+    def _new_card(self) -> ArtistCard:
+        """A card for the grid, remembered for lyrics updates."""
+        card = ArtistCard(self.win.art, self.win.app.lyrics)
+        self._cards.append(card)
+        return card
+
+    def _forget_card(self, card):
+        """The grid threw a card away: stop updating it."""
+        if card in self._cards:
+            self._cards.remove(card)
+
+    def _on_lyrics_changed(self, _changed):
+        """Songs gained or lost lyrics: update the "!" on the cards and on open artist pages."""
+        for card in self._cards:
+            if card.name is not None:
+                card.sync_lyrics()
+        stack = self.nav.get_navigation_stack()
+        for i in range(1, stack.get_n_items()):
+            page = stack.get_item(i)
+            if isinstance(page, ArtistPage):
+                page.sync_lyrics()
 
     # ---- data ----
 
@@ -136,8 +164,9 @@ class ArtistPage(Adw.NavigationPage):
     def __init__(self, view: ArtistsView, artist: str):
         super().__init__(title=artist, tag=f"artist:{artist}")
         self.view = view
-        self.win = view.win
+        self.win = win = view.win
         self.artist = artist
+        me = weak_self(self)  # for handlers of widgets this page owns (see weak_self)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(back_button("Artists", lambda: view.nav.pop_to_tag(ROOT_TAG)))
@@ -149,25 +178,32 @@ class ArtistPage(Adw.NavigationPage):
         titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True, valign=Gtk.Align.CENTER)
         name = Gtk.Label(label=artist, xalign=0, ellipsize=3)
         name.add_css_class("page-title")
+        # The name, then the "!" when some of the artist's songs have no lyrics.
+        name_row = Gtk.Box(spacing=8)
+        name_row.append(name)
+        self.no_lyrics = lyrics_missing_mark()
+        name_row.append(self.no_lyrics)
         self.subtitle = Gtk.Label(xalign=0)
         self.subtitle.add_css_class("page-subtitle")
-        titles.append(name)
+        titles.append(name_row)
         titles.append(self.subtitle)
         header.append(titles)
         edit = Gtk.Button(icon_name="document-edit-symbolic", tooltip_text="Change Artist Image",
                           valign=Gtk.Align.START)
         edit.add_css_class("flat")
         edit.add_css_class("circular")
-        edit.connect("clicked", lambda *_: self.win.show_artist_images(artist))
+        edit.add_css_class("artist-page-button")  # theme colour "Artist Page Buttons"
+        edit.connect("clicked", lambda *_: win.show_artist_images(artist))
         # Hide from All Songs and the library queue (Library.set_artist_hidden); refresh() keeps
         # the toggle in step when it changes.
         self.hide_toggle = Gtk.ToggleButton(icon_name="view-conceal-symbolic", valign=Gtk.Align.START)
         self.hide_toggle.add_css_class("flat")
         self.hide_toggle.add_css_class("circular")
-        self.hide_toggle.connect("toggled", lambda b: self.win.library.set_artist_hidden(artist, b.get_active()))
+        self.hide_toggle.add_css_class("artist-page-button")  # lit in "Hidden Artist Button" while on
+        self.hide_toggle.connect("toggled", lambda b: win.library.set_artist_hidden(artist, b.get_active()))
         header.append(self.hide_toggle)
         header.append(edit)
-        self.buttons = play_buttons(lambda: self._play(False), lambda: self._play(True))
+        self.buttons = play_buttons(lambda: me._play(False), lambda: me._play(True))
         self.buttons.set_halign(Gtk.Align.START)
         self.buttons.set_margin_top(8)
         titles.append(self.buttons)
@@ -177,12 +213,12 @@ class ArtistPage(Adw.NavigationPage):
 
         self.store = Gio.ListStore(item_type=AlbumItem)
         factory = Gtk.SignalListItemFactory()
-        factory.connect("setup", lambda _f, li: li.set_child(AlbumCard(self.win.art)))
+        factory.connect("setup", lambda _f, li: li.set_child(AlbumCard(win.art)))
         factory.connect("bind", lambda _f, li: li.get_child().set_album(li.get_item()))
         grid = Gtk.GridView(model=Gtk.NoSelection(model=self.store), factory=factory,
                             single_click_activate=True, max_columns=12, min_columns=1)
         grid.add_css_class("card-grid")
-        grid.connect("activate", lambda g, pos: view.push_album(self.store.get_item(pos)))
+        grid.connect("activate", lambda g, pos: view.push_album(me.store.get_item(pos)))
         box.append(grid_scroller(grid))
         box.add_css_class("content-glass")
         box.set_overflow(Gtk.Overflow.HIDDEN)  # clip to the rounded card
@@ -212,12 +248,19 @@ class ArtistPage(Adw.NavigationPage):
         self.hide_toggle.set_active(hidden)
         self.hide_toggle.set_tooltip_text("Show in All Songs and Queue" if hidden
                                           else "Hide from All Songs and Queue")
+        self.sync_lyrics()
 
         def apply(texture):
             """Show the artist's picture (None falls back to initials)."""
             self.avatar.set_custom_image(texture)  # None falls back to initials
         self.win.art.request_artist(self.artist, tracks[0], 128, apply)
         return True
+
+    def sync_lyrics(self):
+        """Show the "!" after the name (its tooltip counting the songs without lyrics) if any have none."""
+        missing = len(self.win.app.lyrics.missing_tracks(self.tracks))
+        self.no_lyrics.set_visible(missing > 0)
+        self.no_lyrics.set_tooltip_text(missing_lyrics_text(missing) if missing else None)
 
     def _play(self, shuffle):
         """Play all of the artist's songs, in order or shuffled."""
@@ -236,6 +279,7 @@ class AlbumPage(Adw.NavigationPage):
         self.view = view
         self.win = view.win
         self.key = tuple(key)
+        me = weak_self(self)  # for handlers of widgets this page owns (see weak_self)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(back_button(key[0], lambda: view.nav.pop()))
@@ -257,7 +301,7 @@ class AlbumPage(Adw.NavigationPage):
         self.subtitle.add_css_class("page-subtitle")
         for w in (kind, title, artist, self.subtitle):
             info.append(w)
-        buttons = play_buttons(lambda: self.songs.play_all(False), lambda: self.songs.play_all(True))
+        buttons = play_buttons(lambda: me.songs.play_all(False), lambda: me.songs.play_all(True))
         buttons.set_margin_top(8)
         buttons.set_halign(Gtk.Align.START)
         info.append(buttons)
